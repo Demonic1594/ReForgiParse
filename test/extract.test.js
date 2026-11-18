@@ -77,3 +77,31 @@ test("an unterminated string is reported, not read past its line", () => {
     const [src] = extractCode('const c = { code: "$ping\n}')
     assert.equal(src.error, "unterminated string")
 })
+
+test("quoted property names are code properties too", () => {
+    const file = `module.exports = [{ "name": "a", "code": "$ping" }, { 'code': '$pong' }, { "mycode": "$no" }]`
+    const found = extractCode(file)
+    assert.deepEqual(found.map((s) => [s.property, s.value]), [["code", "$ping"], ["code", "$pong"]])
+    assert.equal(file.slice(found[0].start, found[0].end), '"$ping"')
+})
+
+test("regular expression literals are skipped as JavaScript reads them, and division is not one", () => {
+    // Each file must give the code values Node itself finds when it runs the file.
+    const files = [
+        "const strip = (s) => s.replace(/`/g, '')\nmodule.exports = { code: `$ping` }",
+        "const q = /'/g; module.exports = { code: \"$ping\" }",
+        'const r = /["\\/]/; const s = /[/"]+/g\nmodule.exports = { code: "$ping" }',
+        "const a = 4, b = 2, c = 1; const x = a / b / c; const y = (a) / 2; module.exports = { code: \"$ping\" }",
+        "function f(s) { return /`/.test(s) }\nmodule.exports = { code: `$ping ${f('`') ? 'a' : 'b'}` }",
+        "module.exports = { code: `${'x'.replace(/[`}]/g, '')}$ping` }",
+        "const t = [1][0] / 1; const u = 'a' / 1; module.exports = { code: '$ping' }",
+    ]
+    for (const file of files) {
+        const exports = {}
+        vm.runInNewContext(file, { module: { exports }, exports })
+        const found = extractCode(file)
+        assert.equal(found.length, 1, file)
+        assert.equal(found[0].error, null, file)
+        assert.match(found[0].value, /\$ping/, file)
+    }
+})

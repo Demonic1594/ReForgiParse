@@ -66,6 +66,7 @@ Before a release, run `npx reforgiparse` on working bots with their extensions i
 |---|---|
 | License | Contributions are LGPL-3.0-or-later. Do not copy code from ForgeLint, which is GPL-3.0-only; its ideas may be reimplemented independently. |
 | Build output | `dist/` is committed and must match `src/`. Run `npm run build` before committing; CI checks this. |
+| Package | `files` in `package.json` lists what is published. `test/package.test.js` checks the published files and the type declarations, and CI installs the packed package into an empty bot and runs it. |
 | Compatibility | `engines` stays at `>=18.17`. No runtime dependencies. |
 | Tests | Every fix and every rule has a test that fails without it. |
 

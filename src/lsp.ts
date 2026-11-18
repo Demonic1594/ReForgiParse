@@ -4,17 +4,19 @@
 // Language Server Protocol (VS Code through a client extension, Neovim, Helix, Zed, ...).
 //
 // It gives the same diagnostics as the command line, as you type, and quick fixes: a name's letter
-// case, escaping brackets that close a function too early, and turning a rule off for a line. It
-// has no dependencies: the protocol is JSON-RPC with Content-Length headers, done here.
+// case, escaping brackets that close a function too early, and turning a rule off for a line. In
+// code strings it also completes function names and shows a function's usage on hover. It has no
+// dependencies: the protocol is JSON-RPC with Content-Length headers, done here.
 
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
 import { ConfigError } from "./config"
 import { checkScript, Diagnostic } from "./core"
-import { extractCode, CodeSource } from "./extract"
+import { extractCode, CodeSource, fileOffset } from "./extract"
 import { fixText } from "./fix"
-import { AnyField, Call, parse, ParseResult } from "./parser"
+import { AnyField, Call, parse, ParseResult, walk } from "./parser"
 import { Project } from "./project"
+import { IRawFunction, usage } from "./table"
 
 interface Message {
     jsonrpc: "2.0"
@@ -48,6 +50,7 @@ export function serve(input: NodeJS.ReadableStream = process.stdin, output: Node
     let root = process.cwd()
     let project: Project | null = null
     let shuttingDown = false
+    let snippets = false
 
     // Kept before anything is redirected: load() points process.stdout at stderr while ForgeScript
     // loads, and the protocol must still reach the editor then.
@@ -118,11 +121,14 @@ export function serve(input: NodeJS.ReadableStream = process.stdin, output: Node
                 const folder = p.workspaceFolders?.[0]?.uri ?? p.rootUri
                 const fromUri = folder ? fileOf(folder) : null
                 root = fromUri ?? p.rootPath ?? process.cwd()
+                snippets = !!p.capabilities?.textDocument?.completion?.completionItem?.snippetSupport
                 load()
                 return reply({
                     capabilities: {
                         textDocumentSync: { openClose: true, change: 1, save: { includeText: false } },
                         codeActionProvider: { codeActionKinds: ["quickfix", "source.fixAll"] },
+                        hoverProvider: true,
+                        completionProvider: { triggerCharacters: ["$"], resolveProvider: true },
                     },
                     serverInfo: { name: "reforgiparse", version: require("../package.json").version },
                 })
@@ -154,6 +160,14 @@ export function serve(input: NodeJS.ReadableStream = process.stdin, output: Node
                 return
             case "textDocument/codeAction":
                 return reply(codeActions(p.textDocument.uri, p.range, p.context?.diagnostics ?? [], p.context?.only))
+            case "textDocument/hover":
+                return reply(hover(p.textDocument.uri, p.position))
+            case "textDocument/completion":
+                return reply(complete(p.textDocument.uri, p.position))
+            case "completionItem/resolve": {
+                const fn = project && typeof p.data === "string" ? project.table.get(p.data) : undefined
+                return reply(fn ? { ...p, documentation: { kind: "markdown", value: describe(fn) } } : p)
+            }
             case "shutdown":
                 shuttingDown = true
                 return reply(null)
@@ -195,6 +209,57 @@ export function serve(input: NodeJS.ReadableStream = process.stdin, output: Node
         }
         void range
         return actions
+    }
+
+    /** The function whose name is under the cursor, with its usage and description. */
+    const hover = (uri: string, position: { line: number; character: number }) => {
+        const doc = docs.get(uri)
+        if (!doc || !project) return null
+        const at = codeAt(doc.text, offsetAt(doc.text, position), project.properties)
+        if (!at) return null
+        const res = parse(at.src.value, project.table, { recover: true })
+        const call = Array.from(walk(res.functions)).find((c) => c.start <= at.index && at.index < c.nameEnd)
+        if (!call) return null
+        const start = fileOffset(at.src, call.start)
+        const end = fileOffset(at.src, call.nameEnd - 1) + 1
+        return { contents: { kind: "markdown", value: describe(call.fn) }, range: { start: positionAt(doc.text, start), end: positionAt(doc.text, end) } }
+    }
+
+    /** Function names for the `$name` being written in a code string. */
+    const complete = (uri: string, position: { line: number; character: number }) => {
+        const none = { isIncomplete: false, items: [] as unknown[] }
+        const doc = docs.get(uri)
+        if (!doc || !project) return none
+        const offset = offsetAt(doc.text, position)
+        const at = codeAt(doc.text, offset, project.properties)
+        if (!at) return none
+        const before = at.src.value.slice(0, at.index)
+        const m = NAME_BEFORE_CURSOR.exec(before)
+        if (!m) return none
+        let slashes = 0
+        for (let k = m.index - 1; k >= 0 && before[k] === BACKSLASH; k--) slashes++
+        if (slashes % 2) return none // an escaped $ is a dollar sign, not a call
+        const typed = m[1] ?? ""
+        const from = typed ? at.src.offsets[at.index - typed.length] : offset
+        const range = { start: positionAt(doc.text, from), end: positionAt(doc.text, offset) }
+        const items: unknown[] = []
+        for (const [key, fn] of project.table.byKey) {
+            const main = key === fn.name.toLowerCase()
+            const declared = main ? fn.name : (fn.aliases ?? []).find((a) => a.toLowerCase() === key) ?? key
+            const bare = declared.replace(/^[$]/, "")
+            const brackets = snippets && !!fn.args?.required
+            items.push({
+                label: `$${bare}`,
+                kind: 3,
+                detail: main ? usage(fn) : `${usage(fn)} (alias)`,
+                filterText: bare,
+                textEdit: { range, newText: brackets ? `${bare}[$0]` : bare },
+                insertTextFormat: brackets ? 2 : 1,
+                ...(fn.deprecated ? { tags: [1] } : {}),
+                data: fn.name,
+            })
+        }
+        return { isIncomplete: false, items }
     }
 
     // Content-Length framed JSON-RPC on the input stream.
@@ -240,6 +305,37 @@ export function offsetAt(text: string, pos: { line: number; character: number })
         offset = next + 1
     }
     return Math.min(offset + pos.character, text.length)
+}
+
+const BACKSLASH = String.fromCharCode(92)
+/** A `$name` (with `!`, `#` or `@[...]`) being written, ending at the cursor. */
+const NAME_BEFORE_CURSOR = /[$]!?#?(?:@\[[^\]]*\])?([A-Za-z_][A-Za-z0-9_]*)?$/
+
+/** The code string around a file offset, and the index in its value the offset is at. */
+function codeAt(text: string, offset: number, properties: string[]): { src: CodeSource; index: number } | null {
+    const src = extractCode(text, properties).find((s) => s.start < offset && (offset < s.end || (s.error !== null && offset <= s.end)))
+    if (!src) return null
+    let index = src.offsets.findIndex((o) => o >= offset)
+    if (index < 0) index = src.value.length
+    return { src, index }
+}
+
+/** A function, as hover and completion show it: usage, description, arguments, output and package. */
+export function describe(fn: IRawFunction): string {
+    const fence = "```"
+    const lines = [fence, usage(fn), fence]
+    if (fn.description) lines.push("", fn.description)
+    const params = fn.params ?? []
+    if (params.length) {
+        lines.push("")
+        for (const p of params) {
+            const values = p.enum?.length ? `: ${p.enum.slice(0, 8).join(", ")}${p.enum.length > 8 ? ", ..." : ""}` : ""
+            lines.push(`- ${"`"}${p.name}${"`"}${p.type ? ` ${p.type}` : ""}${p.rest ? ", any number" : ""}${p.required ? "" : ", optional"}${values}`)
+        }
+    }
+    const foot = [fn.output?.length ? `Returns ${fn.output.join(" or ")}` : "", fn.package ?? "", fn.deprecated ? "**Deprecated**" : ""].filter(Boolean)
+    if (foot.length) lines.push("", foot.join(" \u00b7 "))
+    return lines.join("\n")
 }
 
 /** A text offset to an LSP position. */

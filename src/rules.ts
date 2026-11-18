@@ -69,11 +69,22 @@ export function checkCode(code: string, table: FunctionTable, options: CheckOpti
     const out: Finding[] = []
     const add = (rule: Rule, message: string, start: number, end: number) => out.push({ rule, severity: Rules[rule].severity, message, start, end: Math.max(end, start) })
     const calls = Array.from(walk(result.functions))
+    const issues = nameIssues(code, table, result)
 
     for (const e of result.errors) {
         const fn = table.get(e.fn)
-        const hint = fn && fn.params ? `. Usage: ${usage(fn)}` : ""
-        add(COMPILE_RULE[e.kind], `${e.message}${hint}`, e.start, e.end)
+        const help = fn && fn.params ? `Usage: ${usage(fn)}` : ""
+        // `$authorI`: no such function, so ForgeScript reads `$author`, which needs brackets. One error, not
+        // an error and a glued-name warning, and the name that was probably meant.
+        const glued = e.kind === "requires-brackets" ? issues.find((x) => x.kind === "glued" && x.start === e.start) : undefined
+        if (glued && fn) {
+            issues.splice(issues.indexOf(glued), 1)
+            const guess = suggest(glued.written, table, fn)
+            const parts = [`${glued.written} is not a function here: ForgeScript reads ${glued.runs}, which requires brackets, so the code does not compile.`, guess ? `Did you mean ${guess}?` : "", help]
+            add(COMPILE_RULE[e.kind], parts.filter(Boolean).join(" "), glued.start, glued.end)
+            continue
+        }
+        add(COMPILE_RULE[e.kind], help ? `${e.message}. ${help}` : e.message, e.start, e.end)
     }
 
     for (const call of calls) {
@@ -104,14 +115,17 @@ export function checkCode(code: string, table: FunctionTable, options: CheckOpti
             for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field]) textProblems(code, call, part, add)
         }
     }
+    for (const b of unescapedBrackets(code, result)) {
+        add("unescaped-bracket", `This ] closes ${b.call.name}, not the [ in its text, so what follows is printed. Escape both as \\[ and \\] (\\\\[ and \\\\] in a JavaScript string)`, b.close, b.close + 1)
+    }
 
-    for (const issue of nameIssues(code, table, result)) {
+    for (const issue of issues) {
         const guess = suggest(issue.written, table)
         if (issue.kind === "unknown") {
             add("unknown-function", `${issue.written} is not a function here, so ForgeScript prints it as text${guess ? `. Did you mean ${guess}?` : ""}`, issue.start, issue.end)
         } else {
             const other = guess && guess.toLowerCase() !== issue.runs!.toLowerCase() ? ` Did you mean ${guess}?` : ""
-            add("glued-name", `${issue.written} runs ${issue.runs} and prints "${issue.rest}" after it.${other}`, issue.start, issue.end)
+            add("glued-name", `${issue.written} runs ${issue.runs} and prints "${issue.rest}" after it${other ? `.${other}` : ""}`, issue.start, issue.end)
         }
     }
 
@@ -191,10 +205,15 @@ export interface UnescapedBracket {
     close: number
 }
 
-/** Every argument whose `]` closes its function while a `[` in its text is open. */
+/**
+ * Every argument whose `]` closes its function while a `[` in its text is open. Calls that contain a
+ * compile error are left out: ForgeScript compiles none of the code, and where their brackets belong
+ * is only the parser's guess after the error.
+ */
 export function unescapedBrackets(code: string, result: ParseResult): UnescapedBracket[] {
     const out: UnescapedBracket[] = []
     for (const call of walk(result.functions)) {
+        if (result.errors.some((e) => call.start <= e.start && e.start < call.end)) continue
         for (const field of call.fields ?? []) {
             for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field]) {
                 const opens = openBrackets(code, part)
@@ -210,10 +229,6 @@ function textProblems(code: string, call: Call, field: Field, add: Add) {
         if (escaped && /[A-Za-z0-9]/.test(ch)) {
             add("escaped-letter", `\\${ch} inside ${call.name}'s argument is just "${ch}": ForgeScript drops the backslash${ch === "n" ? ". For a new line, use a real line break" : ""}`, at, at + 2)
         }
-    }
-    // Brackets in text are not counted: a ] meant for a [ in the text closes the function.
-    if (openBrackets(code, field).length && code[field.end] === "]") {
-        add("unescaped-bracket", `This ] closes ${call.name}, not the [ in its text, so what follows is printed. Escape both as \\[ and \\] (\\\\[ and \\\\] in a JavaScript string)`, field.end, field.end + 1)
     }
 }
 
@@ -290,15 +305,15 @@ function variableProblems(calls: Call[], options: CheckOptions, add: Add) {
     }
 }
 
-/** The closest function name to a mistyped one, or `null` when none is close enough. */
-export function suggest(written: string, table: FunctionTable): string | null {
+/** The closest function name to a mistyped one, or `null` when none is close enough. `except` is never suggested. */
+export function suggest(written: string, table: FunctionTable, except?: IRawFunction): string | null {
     const word = written.replace(/^\$/, "").toLowerCase()
     const limit = word.length <= 4 ? 1 : word.length <= 8 ? 2 : 3
     let best: string | null = null
     let bestDistance = Infinity
     for (const [key, fn] of table.byKey) {
         const name = key.slice(1)
-        if (Math.abs(name.length - word.length) > limit) continue
+        if (fn === except || Math.abs(name.length - word.length) > limit) continue
         const d = distance(word, name, limit)
         if (d < bestDistance || (d === bestDistance && best !== null && fn.name.length < best.length)) {
             bestDistance = d

@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.6.0 - 2026-11-18
+
+### Added
+
+- Language server: completion of function names after `$` in code strings, from ForgeScript, the bot's extensions and its custom functions, and hover with a function's usage, description, arguments, output and package.
+- `--max-warnings <n>` option: exit with code 1 when there are more than `n` warnings. With `--format github`, the failure is also reported as an annotation.
+- Options that take a value accept `--option=value`. An unknown option suggests the closest one.
+- `FORCE_COLOR` keeps colours when the output is not a terminal, for CI logs.
+- `--fix-brackets` also escapes brackets written as `\[` and `\]` in JavaScript, which reach ForgeScript as plain brackets.
+- Type declarations for `reforgiparse/core` under TypeScript's `node10` module resolution, the default for `"module": "commonjs"`.
+- API: `FunctionTable.functions`; `description` and `output` on `IRawFunction`.
+
+### Changed
+
+- A folder or file given on the command line is checked as part of its bot (the nearest folder above it with a `package.json`), so the bot's custom functions, extensions and configuration apply, and paths are reported from the bot's folder.
+- A name that compiles only as a shorter function needing brackets, such as `$authorI`, is one `missing-brackets` error that names the likely function (`$authorID`), instead of an error and a `glued-name` warning.
+- `invalid-argument` describes an empty argument as empty.
+- The summary uses singular and plural forms and lists the function sources on a line of its own. Locations are aligned within each file.
+- Usage and configuration errors start with `reforgiparse:` and give paths relative to the current folder.
+- The JSON output's `functions` counts functions, not names and aliases.
+- The published package no longer contains source maps.
+
+### Fixed
+
+- `code` properties with quoted names (`"code": "..."`) were not checked.
+- A regular expression literal containing a quote or a backtick could stop the rest of the file from being read.
+- A path that does not exist, or a file that is not JavaScript or TypeScript, was checked as nothing and passed with exit code 0. It is now a usage error (exit code 2).
+- Installed in a bot, ReForgiParse read itself as a ForgeScript extension and printed a note on every run.
+- `unescaped-bracket` was reported, and `--fix-brackets` escaped brackets, inside calls that contain a compile error, where ForgeScript compiles nothing and the brackets' meaning is unknown. Those calls are skipped.
+- A misspelt rule name in the configuration was reported as `config: config:` instead of with the configuration file's path.
+
 ## 0.5.0 - 2026-11-18
 
 ### Added

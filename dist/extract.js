@@ -10,6 +10,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.DYNAMIC = void 0;
 exports.cook = cook;
+exports.regexCanStart = regexCanStart;
+exports.skipRegex = skipRegex;
 exports.extractCode = extractCode;
 exports.fileOffset = fileOffset;
 exports.lineColumn = lineColumn;
@@ -49,6 +51,10 @@ function cook(text, i) {
                 }
                 if (ch === "/" && (text[k + 1] === "/" || text[k + 1] === "*")) {
                     k = skipComment(text, k);
+                    continue;
+                }
+                if (ch === "/" && regexCanStart(text, k, j + 2)) {
+                    k = skipRegex(text, k);
                     continue;
                 }
                 if (ch === "{")
@@ -115,6 +121,50 @@ function cook(text, i) {
     }
     return done(n, "unterminated literal");
 }
+/** Words after which a `/` starts a regular expression, not a division. */
+const BEFORE_REGEX = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"]);
+/**
+ * Whether a `/` at `text[i]` (not a comment) starts a regular expression literal, judged as
+ * JavaScript's grammar does in practice: after a value (a name, number, string, `)` or `]`) it is a
+ * division; after an operator, punctuation, a keyword such as `return`, or nothing, a regex.
+ */
+function regexCanStart(text, i, from = 0) {
+    let k = i - 1;
+    while (k >= from && /\s/.test(text[k]))
+        k--;
+    if (k < from)
+        return true;
+    const p = text[k];
+    if (/[\w$]/.test(p)) {
+        let w = k;
+        while (w > from && /[\w$]/.test(text[w - 1]))
+            w--;
+        return BEFORE_REGEX.has(text.slice(w, k + 1));
+    }
+    return !/[)\]"'`.]/.test(p);
+}
+/** The end of the regular expression literal starting at `text[i]`, past its flags. */
+function skipRegex(text, i) {
+    let inClass = false;
+    for (let k = i + 1; k < text.length; k++) {
+        const c = text[k];
+        if (c === "\n" || c === "\r")
+            return i + 1; // not a regex after all: a line cannot hold half of one
+        if (c === "\\")
+            k++;
+        else if (c === "[")
+            inClass = true;
+        else if (c === "]")
+            inClass = false;
+        else if (c === "/" && !inClass) {
+            k++;
+            while (k < text.length && /[a-z]/i.test(text[k]))
+                k++;
+            return k;
+        }
+    }
+    return i + 1;
+}
 function skipComment(text, i) {
     if (text[i + 1] === "/") {
         const j = text.indexOf("\n", i);
@@ -131,7 +181,7 @@ const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
  */
 function extractCode(text, properties = ["code"]) {
     const names = [...new Set(properties)].sort((a, b) => b.length - a.length).map(escapeRegex).join("|");
-    const prop = new RegExp(`(${names})\\s*:\\s*(["'\`])`, "y");
+    const prop = new RegExp(`(["']?)(${names})\\1\\s*:\\s*(["'\`])`, "y");
     const found = [];
     let i = 0;
     const n = text.length;
@@ -147,13 +197,17 @@ function extractCode(text, properties = ["code"]) {
             if (m) {
                 const q = prop.lastIndex - 1;
                 const r = cook(text, q);
-                found.push({ property: m[1], value: r.value, offsets: r.offsets, start: q, end: r.end, dynamic: r.dynamic, error: r.error });
+                found.push({ property: m[2], value: r.value, offsets: r.offsets, start: q, end: r.end, dynamic: r.dynamic, error: r.error });
                 i = r.end;
                 continue;
             }
         }
         if (c === '"' || c === "'" || c === "`") {
             i = cook(text, i).end;
+            continue;
+        }
+        if (c === "/" && regexCanStart(text, i)) {
+            i = skipRegex(text, i);
             continue;
         }
         i++;

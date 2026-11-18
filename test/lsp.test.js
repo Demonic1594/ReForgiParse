@@ -196,7 +196,7 @@ test("fix-all, a closed document, unknown requests, and a broken config reported
     assert.equal(res.result.length, 1)
     assert.equal(apply("module.exports = { code: `$AUTHORID $PING` }\n", res.result[0].edit, uri), "module.exports = { code: `$authorID $ping` }\n")
 
-    const unknown = await c.request("textDocument/hover", { textDocument: { uri }, position: { line: 0, character: 0 } })
+    const unknown = await c.request("textDocument/definition", { textDocument: { uri }, position: { line: 0, character: 0 } })
     assert.equal(unknown.error.code, -32601)
 
     const closed = c.diagnostics(uri)
@@ -221,6 +221,46 @@ test("turning a rule off is not offered where $c[...] would change the code", as
     const titles = async (d) => (await c.request("textDocument/codeAction", { textDocument: { uri }, range: d.range, context: { diagnostics: [d] } })).result.map((a) => a.title)
     assert.deepEqual(await titles(diags[0]), [], "not on the line ending with an escape")
     assert.deepEqual(await titles(diags[1]), ["Turn glued-name off for this line"])
+    await c.request("shutdown", null)
+    c.notify("exit", null)
+    assert.equal(await c.exited, 0)
+})
+
+test("hover shows a function's usage and description, and completion offers names inside code only", async () => {
+    const text = "module.exports = { name: 'x', type: 'messageCreate', code: `$sendMessage[$channelID;hi] \\\\$se $!sendM` }\nconst other = '$send'\n"
+    const dir = bot({ "commands/a.js": text })
+    const uri = pathToFileURL(path.join(dir, "commands/a.js")).href
+    const c = client(dir)
+    const init = await c.request("initialize", { processId: process.pid, rootUri: pathToFileURL(dir).href, capabilities: { textDocument: { completion: { completionItem: { snippetSupport: true } } } } })
+    assert.ok(init.result.capabilities.hoverProvider)
+    assert.deepEqual(init.result.capabilities.completionProvider.triggerCharacters, ["$"])
+    const open = c.diagnostics(uri)
+    c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "javascript", version: 1, text } })
+    await open
+    const at = (needle, plus = 0) => ({ line: 0, character: text.indexOf(needle) + plus })
+
+    // Hover on a name: its usage, description, arguments and package; nothing on text or outside code.
+    const hover = (await c.request("textDocument/hover", { textDocument: { uri }, position: at("$sendMessage", 4) })).result
+    assert.match(hover.contents.value, /^```\n\$sendMessage\[channel ID;content\?;return message ID\?\]\n```\n\nSends a message to a channel\n\n- `channel ID` Channel\n/)
+    assert.match(hover.contents.value, /@tryforge\/forgescript$/)
+    assert.deepEqual(hover.range, { start: at("$sendMessage"), end: at("$sendMessage", "$sendMessage".length) })
+    assert.equal((await c.request("textDocument/hover", { textDocument: { uri }, position: at("hi]", 1) })).result, null)
+    assert.equal((await c.request("textDocument/hover", { textDocument: { uri }, position: at("exports") })).result, null)
+
+    // Completion of the name being written, after $ and its ! # @[...] flags.
+    const done = (await c.request("textDocument/completion", { textDocument: { uri }, position: at("$!sendM", 7) })).result
+    const item = done.items.find((i) => i.label === "$sendMessage")
+    assert.ok(item, "$sendMessage is offered")
+    assert.equal(item.textEdit.newText, "sendMessage[$0]")
+    assert.equal(item.insertTextFormat, 2)
+    assert.deepEqual(item.textEdit.range, { start: at("$!sendM", 2), end: at("$!sendM", 7) })
+    assert.ok(done.items.some((i) => i.label === "$serverID" && /\(alias\)$/.test(i.detail)), "aliases too")
+    const resolved = (await c.request("completionItem/resolve", item)).result
+    assert.match(resolved.documentation.value, /Sends a message to a channel/)
+    // Not after an escaped \$, and not in strings that are not code.
+    assert.deepEqual((await c.request("textDocument/completion", { textDocument: { uri }, position: at("\\$se", 4) })).result.items, [])
+    assert.deepEqual((await c.request("textDocument/completion", { textDocument: { uri }, position: { line: 1, character: 20 } })).result.items, [])
+
     await c.request("shutdown", null)
     c.notify("exit", null)
     assert.equal(await c.exited, 0)

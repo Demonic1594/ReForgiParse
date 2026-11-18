@@ -27,7 +27,7 @@ ReForgiParse checks the ForgeScript code in a bot's source files and reports cod
 - **Project awareness.** Loads ForgeScript, every installed extension and the bot's custom functions, and checks each command's event type.
 - **Precise locations.** Findings point to the exact file, line and column, through JavaScript escapes and template literals.
 - **Safe fixes.** Automatic fixes are applied only when they cannot change the bot's behaviour; fixes that do are opt-in and labelled.
-- **Editor support.** A built-in language server and an embeddable core.
+- **Editor support.** A built-in language server with diagnostics, completion, hover and quick fixes, and an embeddable core.
 - **No runtime dependencies.**
 
 ## Installation
@@ -44,9 +44,12 @@ Run in the bot's root folder:
 
 ```bash
 npx reforgiparse                     # check the whole bot
+npx reforgiparse commands            # check a folder of the bot
 npx reforgiparse commands/daily.js   # check specific files
 npx reforgiparse --fix               # apply safe fixes, then check
 ```
+
+A folder or file is always checked as part of its bot (the nearest folder above it with a `package.json`), so the bot's custom functions, extensions and configuration apply. A path that does not exist, or is not a JavaScript or TypeScript file, is reported as an error.
 
 Given this command:
 
@@ -67,10 +70,11 @@ ReForgiParse reports:
 
 ```
 commands/shop.js:5:20  error    $addButton: "style" must be Primary (letter case matters), not "primary". ForgeScript stops the command: "Given value primary for argument style is not of type Enum"  [invalid-argument]
-commands/shop.js:7:8  warning  $color: "blue" is not a colour name, so it is read as hexadecimal up to its first non-hex letter: #00000b. Write Blue  [color-value]
-commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScript prints it as text. Did you mean $sendMessage?  [unknown-function]
+commands/shop.js:7:8   warning  $color: "blue" is not a colour name, so it is read as hexadecimal up to its first non-hex letter: #00000b. Write Blue  [color-value]
+commands/shop.js:9:1   warning  $sendMesage is not a function here, so ForgeScript prints it as text. Did you mean $sendMessage?  [unknown-function]
 
-1 error(s), 2 warning(s) in 1 file(s) under . (functions: @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0)
+1 error, 2 warnings in 1 file
+Functions from @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0.
 ```
 
 ### Options
@@ -83,17 +87,22 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 | `--reindent` | Re-indent code by nesting depth. See [Fixes](#fixes). |
 | `--config <file>` | Use a specific configuration file. |
 | `--property <name>` | Also treat this property as code, in addition to `code`. Repeatable. |
+| `--max-warnings <n>` | Exit with code 1 when there are more than `n` warnings. |
 | `--no-warnings` | Report errors only. |
 | `--no-info` | Omit informational findings. |
 | `--quiet` | Print nothing when there are no findings. |
 | `--rules` | List all rules. |
 | `--lsp` | Start the language server. |
 
-Exit codes: `0` no errors, `1` errors found, `2` invalid usage or configuration.
+Options that take a value also accept `--option=value`.
+
+Exit codes: `0` no errors, `1` errors found (or more warnings than `--max-warnings`), `2` invalid usage or configuration.
+
+Colours are used on a terminal. Set `NO_COLOR` to turn them off, or `FORCE_COLOR=1` to keep them in CI logs.
 
 ### What is checked
 
-- **Code:** string values of the `code` property in `.js`, `.ts`, `.cjs`, `.mjs`, `.cts` and `.mts` files. `node_modules`, hidden folders, and top-level `dist`, `build`, `docs`, `coverage` and `out` are skipped.
+- **Code:** string values of the `code` property (quoted or not) in `.js`, `.ts`, `.cjs`, `.mjs`, `.cts` and `.mts` files, read as JavaScript reads them. `node_modules`, hidden folders, and top-level `dist`, `build`, `docs`, `coverage` and `out` are skipped.
 - **Functions:** ForgeScript and every installed package that depends on it, in the order a bot loads them. Extensions without `metadata/functions.json` are read from their function files without being started.
 - **Custom functions:** `{ name, params, code }` objects anywhere in the bot, and every `{ name, code }` in a `functions` folder.
 - **Events:** each command's `type` against the events of ForgeScript and its extensions.
@@ -145,10 +154,10 @@ Run `npx reforgiparse --rules` for descriptions.
 | Option | Changes | Behaviour |
 |---|---|---|
 | `--fix` | Function names to their declared case. | Unchanged. Each edit is verified by re-parsing. |
-| `--fix-brackets` | Escapes `[` and `]` in text that would close a function early. | Changed: the text is printed as written. |
+| `--fix-brackets` | Escapes `[` and `]` in text that would close a function early, including `\[` written in JavaScript (which is a plain `[`). | Changed: the text is printed as written. |
 | `--reindent` | Indentation of lines starting with a function, `;` or `]`. | May change output: ForgeScript sends whitespace inside arguments. |
 
-`--reindent` never modifies lines inside conditions, lines in an argument that also contains text, or code that does not compile. The indent size is set by the `indent` option or detected from the code.
+`--fix-brackets` and `--reindent` never modify code that does not compile. `--reindent` also leaves lines inside conditions and lines in an argument that also contains text. The indent size is set by the `indent` option or detected from the code.
 
 ## Configuration
 
@@ -201,7 +210,12 @@ A directive without rule names applies to all rules. Separate several rule names
 
 ### Language server
 
-`reforgiparse --lsp` starts a Language Server Protocol server on standard input and output. It provides diagnostics as you type, quick fixes (letter case, brackets, disabling a rule for a line) and a fix-all action.
+`reforgiparse --lsp` starts a Language Server Protocol server on standard input and output. Inside code strings it provides:
+
+- diagnostics as you type, with the bot's configuration and directives;
+- completion of function names after `$`, from ForgeScript, the bot's extensions and its custom functions;
+- hover with a function's usage, description, arguments, output and package;
+- quick fixes (letter case, brackets, disabling a rule for a line) and a fix-all action.
 
 **Neovim** (0.11+):
 
@@ -226,7 +240,7 @@ name = "javascript"
 language-servers = ["typescript-language-server", "reforgiparse"]
 ```
 
-ReForgiParse complements [ForgeVSC](https://github.com/tryforge/ForgeVSC), which provides completion, hover and highlighting in VS Code.
+In VS Code, [ForgeVSC](https://github.com/tryforge/ForgeVSC) provides completion, hover and highlighting.
 
 ### Embedding
 
@@ -248,7 +262,7 @@ Argument values are validated when a `ValueChecker` is passed as `values`.
 - run: npx reforgiparse --format github
 ```
 
-Findings appear as annotations on pull requests; errors fail the job.
+Findings appear as annotations on pull requests; errors fail the job. Add `--max-warnings 0` to fail on warnings as well.
 
 ## API
 
@@ -275,7 +289,7 @@ Project.load("./bot").check()                          // findings for a whole b
 | `Project.load(folder).check()` | Findings for a whole bot, with file positions. |
 | `fixText(text, table, options)` | Applies fixes to a source file's text. |
 | `extractCode(text)` | Code strings in a source file, with their positions. |
-| `FunctionTable` | Function list: `fromForgeScript()`, `fromMetadata(...)`. |
+| `FunctionTable` | Function list: `fromForgeScript()`, `fromMetadata(...)`, `get(name)`, `functions`. |
 | `loadConfig`, `directivesIn`, `nameIssues`, `render`, `walk`, `usage`, `suggest` | Utilities. |
 
 Positions are UTF-16 offsets, as in JavaScript strings.
@@ -289,7 +303,7 @@ Positions are UTF-16 offsets, as in JavaScript strings.
 
 ## Testing
 
-Parsing is verified against ForgeScript's compiler on hand-written cases and 20,000 generated inputs. Rule behaviour is verified against ForgeScript's interpreter wherever it can run without Discord. The suite runs on Node.js 22 and 24 with ForgeScript 2.8.0 and 2.5.0. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Parsing is verified against ForgeScript's compiler on hand-written cases and 20,000 generated inputs. Rule behaviour is verified against ForgeScript's interpreter wherever it can run without Discord. The suite runs on Node.js 22 and 24 with ForgeScript 2.8.0 and 2.5.0, and CI installs the packed package into an empty bot and runs it. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 npm test

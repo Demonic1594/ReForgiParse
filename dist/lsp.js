@@ -5,8 +5,9 @@
 // Language Server Protocol (VS Code through a client extension, Neovim, Helix, Zed, ...).
 //
 // It gives the same diagnostics as the command line, as you type, and quick fixes: a name's letter
-// case, escaping brackets that close a function too early, and turning a rule off for a line. It
-// has no dependencies: the protocol is JSON-RPC with Content-Length headers, done here.
+// case, escaping brackets that close a function too early, and turning a rule off for a line. In
+// code strings it also completes function names and shows a function's usage on hover. It has no
+// dependencies: the protocol is JSON-RPC with Content-Length headers, done here.
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -43,6 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.serve = serve;
 exports.offsetAt = offsetAt;
+exports.describe = describe;
 exports.positionAt = positionAt;
 const path = __importStar(require("node:path"));
 const node_url_1 = require("node:url");
@@ -52,6 +54,7 @@ const extract_1 = require("./extract");
 const fix_1 = require("./fix");
 const parser_1 = require("./parser");
 const project_1 = require("./project");
+const table_1 = require("./table");
 const CODE_FILE = /\.(c|m)?(j|t)sx?$/;
 const SEVERITY = { error: 1, warning: 2, info: 3 };
 /** Runs a language server on the given streams (stdin and stdout by default) until `exit`. */
@@ -61,6 +64,7 @@ function serve(input = process.stdin, output = process.stdout) {
     let root = process.cwd();
     let project = null;
     let shuttingDown = false;
+    let snippets = false;
     // Kept before anything is redirected: load() points process.stdout at stderr while ForgeScript
     // loads, and the protocol must still reach the editor then.
     const write = output.write.bind(output);
@@ -129,11 +133,14 @@ function serve(input = process.stdin, output = process.stdout) {
                 const folder = p.workspaceFolders?.[0]?.uri ?? p.rootUri;
                 const fromUri = folder ? fileOf(folder) : null;
                 root = fromUri ?? p.rootPath ?? process.cwd();
+                snippets = !!p.capabilities?.textDocument?.completion?.completionItem?.snippetSupport;
                 load();
                 return reply({
                     capabilities: {
                         textDocumentSync: { openClose: true, change: 1, save: { includeText: false } },
                         codeActionProvider: { codeActionKinds: ["quickfix", "source.fixAll"] },
+                        hoverProvider: true,
+                        completionProvider: { triggerCharacters: ["$"], resolveProvider: true },
                     },
                     serverInfo: { name: "reforgiparse", version: require("../package.json").version },
                 });
@@ -166,6 +173,14 @@ function serve(input = process.stdin, output = process.stdout) {
                 return;
             case "textDocument/codeAction":
                 return reply(codeActions(p.textDocument.uri, p.range, p.context?.diagnostics ?? [], p.context?.only));
+            case "textDocument/hover":
+                return reply(hover(p.textDocument.uri, p.position));
+            case "textDocument/completion":
+                return reply(complete(p.textDocument.uri, p.position));
+            case "completionItem/resolve": {
+                const fn = project && typeof p.data === "string" ? project.table.get(p.data) : undefined;
+                return reply(fn ? { ...p, documentation: { kind: "markdown", value: describe(fn) } } : p);
+            }
             case "shutdown":
                 shuttingDown = true;
                 return reply(null);
@@ -211,6 +226,63 @@ function serve(input = process.stdin, output = process.stdout) {
         }
         void range;
         return actions;
+    };
+    /** The function whose name is under the cursor, with its usage and description. */
+    const hover = (uri, position) => {
+        const doc = docs.get(uri);
+        if (!doc || !project)
+            return null;
+        const at = codeAt(doc.text, offsetAt(doc.text, position), project.properties);
+        if (!at)
+            return null;
+        const res = (0, parser_1.parse)(at.src.value, project.table, { recover: true });
+        const call = Array.from((0, parser_1.walk)(res.functions)).find((c) => c.start <= at.index && at.index < c.nameEnd);
+        if (!call)
+            return null;
+        const start = (0, extract_1.fileOffset)(at.src, call.start);
+        const end = (0, extract_1.fileOffset)(at.src, call.nameEnd - 1) + 1;
+        return { contents: { kind: "markdown", value: describe(call.fn) }, range: { start: positionAt(doc.text, start), end: positionAt(doc.text, end) } };
+    };
+    /** Function names for the `$name` being written in a code string. */
+    const complete = (uri, position) => {
+        const none = { isIncomplete: false, items: [] };
+        const doc = docs.get(uri);
+        if (!doc || !project)
+            return none;
+        const offset = offsetAt(doc.text, position);
+        const at = codeAt(doc.text, offset, project.properties);
+        if (!at)
+            return none;
+        const before = at.src.value.slice(0, at.index);
+        const m = NAME_BEFORE_CURSOR.exec(before);
+        if (!m)
+            return none;
+        let slashes = 0;
+        for (let k = m.index - 1; k >= 0 && before[k] === BACKSLASH; k--)
+            slashes++;
+        if (slashes % 2)
+            return none; // an escaped $ is a dollar sign, not a call
+        const typed = m[1] ?? "";
+        const from = typed ? at.src.offsets[at.index - typed.length] : offset;
+        const range = { start: positionAt(doc.text, from), end: positionAt(doc.text, offset) };
+        const items = [];
+        for (const [key, fn] of project.table.byKey) {
+            const main = key === fn.name.toLowerCase();
+            const declared = main ? fn.name : (fn.aliases ?? []).find((a) => a.toLowerCase() === key) ?? key;
+            const bare = declared.replace(/^[$]/, "");
+            const brackets = snippets && !!fn.args?.required;
+            items.push({
+                label: `$${bare}`,
+                kind: 3,
+                detail: main ? (0, table_1.usage)(fn) : `${(0, table_1.usage)(fn)} (alias)`,
+                filterText: bare,
+                textEdit: { range, newText: brackets ? `${bare}[$0]` : bare },
+                insertTextFormat: brackets ? 2 : 1,
+                ...(fn.deprecated ? { tags: [1] } : {}),
+                data: fn.name,
+            });
+        }
+        return { isIncomplete: false, items };
     };
     // Content-Length framed JSON-RPC on the input stream.
     let buffer = Buffer.alloc(0);
@@ -261,6 +333,38 @@ function offsetAt(text, pos) {
         offset = next + 1;
     }
     return Math.min(offset + pos.character, text.length);
+}
+const BACKSLASH = String.fromCharCode(92);
+/** A `$name` (with `!`, `#` or `@[...]`) being written, ending at the cursor. */
+const NAME_BEFORE_CURSOR = /[$]!?#?(?:@\[[^\]]*\])?([A-Za-z_][A-Za-z0-9_]*)?$/;
+/** The code string around a file offset, and the index in its value the offset is at. */
+function codeAt(text, offset, properties) {
+    const src = (0, extract_1.extractCode)(text, properties).find((s) => s.start < offset && (offset < s.end || (s.error !== null && offset <= s.end)));
+    if (!src)
+        return null;
+    let index = src.offsets.findIndex((o) => o >= offset);
+    if (index < 0)
+        index = src.value.length;
+    return { src, index };
+}
+/** A function, as hover and completion show it: usage, description, arguments, output and package. */
+function describe(fn) {
+    const fence = "```";
+    const lines = [fence, (0, table_1.usage)(fn), fence];
+    if (fn.description)
+        lines.push("", fn.description);
+    const params = fn.params ?? [];
+    if (params.length) {
+        lines.push("");
+        for (const p of params) {
+            const values = p.enum?.length ? `: ${p.enum.slice(0, 8).join(", ")}${p.enum.length > 8 ? ", ..." : ""}` : "";
+            lines.push(`- ${"`"}${p.name}${"`"}${p.type ? ` ${p.type}` : ""}${p.rest ? ", any number" : ""}${p.required ? "" : ", optional"}${values}`);
+        }
+    }
+    const foot = [fn.output?.length ? `Returns ${fn.output.join(" or ")}` : "", fn.package ?? "", fn.deprecated ? "**Deprecated**" : ""].filter(Boolean);
+    if (foot.length)
+        lines.push("", foot.join(" \u00b7 "));
+    return lines.join("\n");
 }
 /** A text offset to an LSP position. */
 function positionAt(text, offset) {

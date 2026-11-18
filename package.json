@@ -1,11 +1,19 @@
 {
   "name": "reforgiparse",
-  "version": "0.5.0",
-  "description": "Checks ForgeScript bots the way ForgeScript compiles them: a parser with the same tree and errors as ForgeScript's own compiler, source positions, error recovery, and a command-line check of a whole bot.",
+  "version": "0.6.0",
+  "description": "Static analysis for ForgeScript bots: a parser that matches ForgeScript's compiler, checks with the bot's own functions, safe fixes, and a language server.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "core": [
+        "dist/core.d.ts"
+      ]
+    }
+  },
   "files": [
-    "dist",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
     "CHANGELOG.md"
   ],
   "scripts": {
@@ -16,6 +24,10 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Demonic1594/ReForgiParse.git"
+  },
+  "homepage": "https://github.com/Demonic1594/ReForgiParse#readme",
+  "bugs": {
+    "url": "https://github.com/Demonic1594/ReForgiParse/issues"
   },
   "keywords": [
     "ast",

@@ -7,6 +7,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FunctionTable = void 0;
 exports.fromMetadata = fromMetadata;
+exports.outputNames = outputNames;
 exports.storesOf = storesOf;
 exports.paramFromNative = paramFromNative;
 exports.withParams = withParams;
@@ -43,8 +44,13 @@ class FunctionTable {
         const key = name.toLowerCase();
         return this.byKey.get(key.startsWith("$") ? key : `$${key}`);
     }
+    /** How many names and aliases call a function. */
     get size() {
         return this.byKey.size;
+    }
+    /** Every function once, whatever names and aliases it has. */
+    get functions() {
+        return [...new Set(this.byKey.values())];
     }
     /**
      * The functions an installed ForgeScript has registered (`FunctionManager.raw`), after the bot's
@@ -84,7 +90,15 @@ function fromMetadata(m) {
         params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest, type: a.type, enum: Array.isArray(a.enum) ? a.enum : undefined })),
         unwrap: !!m.unwrap,
         deprecated: !!m.deprecated,
+        description: typeof m.description === "string" ? m.description : undefined,
+        output: outputNames(m.output),
     };
+}
+/** A function's documented output as ArgType names: from metadata (names) or a NativeFunction (ArgType numbers). */
+function outputNames(output, argType) {
+    const list = Array.isArray(output) ? output : output === undefined || output === null ? [] : [output];
+    const names = list.map((t) => (typeof t === "number" ? argType?.[t] : typeof t === "string" ? t : undefined)).filter((t) => !!t);
+    return names.length ? names : undefined;
 }
 /** What a function's compiled source does with `$let` variables and the environment store. */
 function storesOf(file) {
@@ -123,6 +137,8 @@ function withParams(forgescript) {
             deprecated: !!data.deprecated,
             package: "@tryforge/forgescript",
             stores: storesOf(native.path),
+            description: typeof data.description === "string" ? data.description : undefined,
+            output: outputNames(data.output, forgescript.ArgType),
         };
     });
 }

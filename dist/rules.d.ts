@@ -1,5 +1,5 @@
 import { Call, ParseResult } from "./parser";
-import { FunctionTable } from "./table";
+import { FunctionTable, IRawFunction } from "./table";
 import { ValueChecker } from "./values";
 export type Severity = "error" | "warning" | "info";
 /** A problem in a string of code. Offsets are into that string. */
@@ -110,10 +110,14 @@ export interface UnescapedBracket {
     opens: number[];
     close: number;
 }
-/** Every argument whose `]` closes its function while a `[` in its text is open. */
+/**
+ * Every argument whose `]` closes its function while a `[` in its text is open. Calls that contain a
+ * compile error are left out: ForgeScript compiles none of the code, and where their brackets belong
+ * is only the parser's guess after the error.
+ */
 export declare function unescapedBrackets(code: string, result: ParseResult): UnescapedBracket[];
-/** The closest function name to a mistyped one, or `null` when none is close enough. */
-export declare function suggest(written: string, table: FunctionTable): string | null;
+/** The closest function name to a mistyped one, or `null` when none is close enough. `except` is never suggested. */
+export declare function suggest(written: string, table: FunctionTable, except?: IRawFunction): string | null;
 /** Edit distance with transpositions, giving up above `limit`. */
 export declare function distance(a: string, b: string, limit?: number): number;
 //# sourceMappingURL=rules.d.ts.map

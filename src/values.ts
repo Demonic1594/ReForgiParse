@@ -51,7 +51,7 @@ export class ValueChecker {
         const refused = (expected: string): ValueProblem => ({
             severity: "error",
             rule: "invalid-argument",
-            message: `${fn}: "${param.name}" must be ${expected}, not ${JSON.stringify(text)}. ForgeScript stops the command: "Given value ${text} for argument ${param.name} is not of type ${type}"`,
+            message: `${fn}: "${param.name}" ${text === "" ? `is empty, but must be ${expected}` : `must be ${expected}, not ${JSON.stringify(text)}`}. ForgeScript stops the command: "Given value ${text} for argument ${param.name} is not of type ${type}"`,
         })
 
         if (ID_TYPES.has(type)) return this.idRegex.test(text) ? null : refused("an ID (16 to 23 digits)")

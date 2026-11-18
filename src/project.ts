@@ -7,12 +7,11 @@ export { Diagnostic, ProjectRules } from "./core"
 
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { Config, ConfigError, loadConfig } from "./config"
-import { checkScript, closest, Diagnostic, ProjectRules } from "./core"
+import { checkRuleNames, Config, loadConfig } from "./config"
+import { checkScript, Diagnostic } from "./core"
 import { extractCode } from "./extract"
-import { Rules } from "./rules"
 import { ValueChecker } from "./values"
-import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, paramFromNative, storesOf, withParams } from "./table"
+import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, outputNames, paramFromNative, storesOf, withParams } from "./table"
 
 /** Where a function list came from. */
 export interface FunctionSource {
@@ -30,6 +29,9 @@ export interface ProjectOptions {
     /** The config to use. Default: the bot's own (`reforgiparse.config.json` or package.json). Pass `{}` for none. */
     config?: Config
 }
+
+/** This package's name, as a bot lists it among its dependencies. */
+const SELF: string = require("../package.json").name
 
 /** Extensions of files that are read. */
 const CODE_FILE = /\.(c|m)?(j|t)s$/
@@ -75,12 +77,8 @@ export class Project {
     static load(root: string, options: ProjectOptions = {}): Project {
         root = path.resolve(root)
         const config = options.config ?? loadConfig(root).config
-        for (const rule of Object.keys(config.rules ?? {})) {
-            if (!(rule in Rules) && !(rule in ProjectRules)) {
-                const guess = closest(rule, [...Object.keys(Rules), ...Object.keys(ProjectRules)])
-                throw new ConfigError("config", `"rules" names "${rule}", which is not a rule${guess ? ` (did you mean "${guess}"?)` : ""}. See reforgiparse --rules`)
-            }
-        }
+        // A config passed in code is checked too (one read from a file already was, with its path).
+        if (options.config) checkRuleNames(options.config.rules, "the config passed to Project.load")
         const properties = options.properties?.length ? options.properties : config.properties?.length ? config.properties : ["code"]
         const exclude = config.exclude ?? []
         const include = options.include?.length ? options.include : config.include?.length ? config.include : ["."]
@@ -115,7 +113,8 @@ export class Project {
 
         // As in a bot: the extensions' functions first, then ForgeScript's own, which skips names already taken.
         for (const dep of dependencies(root)) {
-            if (dep === "@tryforge/forgescript") continue
+            // ReForgiParse depends on ForgeScript too, but is no extension: it has no functions to add.
+            if (dep === "@tryforge/forgescript" || dep === SELF) continue
             const dir = packageDir(root, dep)
             if (!dir || !usesForgeScript(dir)) continue
             const meta = path.join(dir, "metadata", "functions.json")
@@ -153,7 +152,7 @@ export class Project {
         const everyFile = include.length === 1 && include[0] === "." ? files : listFiles(root, root, exclude)
         const custom = everyFile.flatMap((f) => customFunctions(root, f, properties))
         for (const c of custom) {
-            const fn = customAsRaw(c)
+            const fn = { ...customAsRaw(c), description: `A custom function, in ${c.file}` }
             const i = raw.findIndex((x) => x.name.toLowerCase() === fn.name.toLowerCase())
             if (i >= 0) raw[i] = fn
             else raw.push(fn)
@@ -236,6 +235,8 @@ export function readNatives(dir: string, argType?: Record<number, string>): { fu
                     unwrap: !!data.unwrap && args.length > 0,
                     deprecated: !!data.deprecated,
                     stores: storesOf(p),
+                    description: typeof data.description === "string" ? data.description : undefined,
+                    output: outputNames(data.output, argType),
                 })
             } else if (handler && item && typeof item.name === "string" && typeof item.register === "function") events.push(item.name)
         }
