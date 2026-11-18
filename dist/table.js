@@ -7,6 +7,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FunctionTable = void 0;
 exports.fromMetadata = fromMetadata;
+exports.withParams = withParams;
+exports.usage = usage;
 /** Escapes a name the way ForgeScript does before joining names into one regular expression. */
 const ESCAPE = /(\.|\$|\(|\)|\*|\[|\]|\{|\}|\?|!|\^)/gim;
 /**
@@ -47,7 +49,7 @@ class FunctionTable {
      * extensions loaded theirs. Without a running bot, call `FunctionManager.loadNative()` first.
      */
     static fromForgeScript(forgescript = require("@tryforge/forgescript")) {
-        return new FunctionTable(forgescript.FunctionManager.raw);
+        return new FunctionTable(withParams(forgescript));
     }
     /**
      * From metadata in the format extensions publish (`metadata/functions.json`: `name`, `aliases`,
@@ -77,6 +79,25 @@ function fromMetadata(m) {
         args: m.brackets === undefined || m.brackets === null
             ? null
             : { required: m.brackets, fields: (m.args ?? []).map((a) => ({ condition: !!a.condition, rest: !!a.rest })) },
+        params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest })),
+        unwrap: !!m.unwrap,
+        deprecated: !!m.deprecated,
     };
+}
+/** `FunctionManager.raw`, with each function's documented arguments from its definition. */
+function withParams(forgescript) {
+    return forgescript.FunctionManager.raw.map((f) => {
+        const data = forgescript.FunctionManager.get?.(f.name)?.data;
+        return data ? { ...f, params: (data.args ?? []).map((a) => ({ name: a.name, required: !!a.required, rest: !!a.rest })), unwrap: !!data.unwrap, deprecated: !!data.deprecated } : f;
+    });
+}
+/** How a function is written with its arguments: `$sendMessage[channel ID;content?;return message ID?]`. */
+function usage(fn) {
+    if (!fn.args)
+        return fn.name;
+    const params = fn.params ?? [];
+    if (!params.length)
+        return `${fn.name}[]`;
+    return `${fn.name}[${params.map((p) => `${p.name}${p.rest ? "..." : ""}${p.required ? "" : "?"}`).join(";")}]`;
 }
 //# sourceMappingURL=table.js.map

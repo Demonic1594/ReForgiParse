@@ -12,7 +12,14 @@ export interface IRawField {
     rest?: boolean
 }
 
-/** A function as ForgeScript's compiler sees it (the shape of `FunctionManager.raw`). */
+/** An argument as documented: what usage hints and argument checks need. */
+export interface IParam {
+    name: string
+    required?: boolean
+    rest?: boolean
+}
+
+/** A function as ForgeScript's compiler sees it (the shape of `FunctionManager.raw`), with its documented arguments when known. */
 export interface IRawFunction {
     /** With the `$`, as registered, e.g. `$sendMessage`. */
     name: string
@@ -23,6 +30,11 @@ export interface IRawFunction {
         required: boolean
         fields: readonly IRawField[]
     } | null
+    /** The documented arguments, in order. Not used by the parser; `undefined` when unknown. */
+    params?: readonly IParam[]
+    /** ForgeScript resolves the arguments before running the function (and so rejects missing ones). */
+    unwrap?: boolean
+    deprecated?: boolean
 }
 
 /** Escapes a name the way ForgeScript does before joining names into one regular expression. */
@@ -68,8 +80,8 @@ export class FunctionTable {
      * The functions an installed ForgeScript has registered (`FunctionManager.raw`), after the bot's
      * extensions loaded theirs. Without a running bot, call `FunctionManager.loadNative()` first.
      */
-    static fromForgeScript(forgescript: { FunctionManager: { raw: IRawFunction[] } } = require("@tryforge/forgescript")) {
-        return new FunctionTable(forgescript.FunctionManager.raw)
+    static fromForgeScript(forgescript: ForgeScriptLike = require("@tryforge/forgescript")) {
+        return new FunctionTable(withParams(forgescript))
     }
 
     /**
@@ -96,7 +108,9 @@ export interface IFunctionMetadata {
     name: string
     aliases?: readonly string[] | null
     brackets?: boolean | null
-    args?: ReadonlyArray<{ condition?: boolean; rest?: boolean }> | null
+    args?: ReadonlyArray<{ name?: string; condition?: boolean; rest?: boolean; required?: boolean }> | null
+    unwrap?: boolean
+    deprecated?: boolean
 }
 
 /** One metadata entry as the compiler sees it. */
@@ -108,5 +122,28 @@ export function fromMetadata(m: IFunctionMetadata): IRawFunction {
             m.brackets === undefined || m.brackets === null
                 ? null
                 : { required: m.brackets, fields: (m.args ?? []).map((a) => ({ condition: !!a.condition, rest: !!a.rest })) },
+        params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest })),
+        unwrap: !!m.unwrap,
+        deprecated: !!m.deprecated,
     }
+}
+
+interface ForgeScriptLike {
+    FunctionManager: { raw: IRawFunction[]; get?(name: string): { data: { args?: IParam[]; unwrap?: boolean; deprecated?: boolean } } | undefined }
+}
+
+/** `FunctionManager.raw`, with each function's documented arguments from its definition. */
+export function withParams(forgescript: ForgeScriptLike): IRawFunction[] {
+    return forgescript.FunctionManager.raw.map((f) => {
+        const data = forgescript.FunctionManager.get?.(f.name)?.data
+        return data ? { ...f, params: (data.args ?? []).map((a) => ({ name: a.name, required: !!a.required, rest: !!a.rest })), unwrap: !!data.unwrap, deprecated: !!data.deprecated } : f
+    })
+}
+
+/** How a function is written with its arguments: `$sendMessage[channel ID;content?;return message ID?]`. */
+export function usage(fn: IRawFunction): string {
+    if (!fn.args) return fn.name
+    const params = fn.params ?? []
+    if (!params.length) return `${fn.name}[]`
+    return `${fn.name}[${params.map((p) => `${p.name}${p.rest ? "..." : ""}${p.required ? "" : "?"}`).join(";")}]`
 }

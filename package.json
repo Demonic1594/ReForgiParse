@@ -1,11 +1,12 @@
 {
   "name": "forgeparse",
-  "version": "0.1.0",
-  "description": "A parser for ForgeScript that gives the same tree and errors as ForgeScript's own compiler, with source positions and error recovery.",
+  "version": "0.2.0",
+  "description": "Checks ForgeScript bots the way ForgeScript compiles them: a parser with the same tree and errors as ForgeScript's own compiler, source positions, error recovery, and a command-line check of a whole bot.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -13,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Demonic1594/ForgeParse.git"
+    "url": "git+https://github.com/Demonic1594/ReForgiParse.git"
   },
   "keywords": [
     "forgescript",
@@ -38,5 +39,8 @@
     "@tryforge/forgescript": "2.8.0",
     "@types/node": "^22.20.5",
     "typescript": "^5.6.3"
+  },
+  "bin": {
+    "forgeparse": "dist/cli.js"
   }
 }

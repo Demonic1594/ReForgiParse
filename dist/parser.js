@@ -26,16 +26,28 @@ class CompileError extends Error {
     column;
     offset;
     kind;
+    start;
+    end;
+    fn;
     constructor(message, 
     /** 1-based, as ForgeScript reports it. */
     line, 
     /** 0-based, in UTF-16 units, as ForgeScript reports it. */
-    column, offset, kind) {
+    column, 
+    /** Where ForgeScript's position is (`line` and `column`), as an offset into the source. */
+    offset, kind, 
+    /** The part of the source the error is about: the call's name, the extra arguments, or the unclosed `[`. */
+    start = offset, end = offset, 
+    /** The function the error is about, with `$`. */
+    fn = "") {
         super(message);
         this.line = line;
         this.column = column;
         this.offset = offset;
         this.kind = kind;
+        this.start = start;
+        this.end = end;
+        this.fn = fn;
         this.name = "CompileError";
     }
 }
@@ -46,6 +58,8 @@ class Compiler {
     recover;
     matches;
     errors = [];
+    /** The `[` of each call being read, innermost last. */
+    opens = [];
     id = 0;
     index = 0;
     matchIndex = 0;
@@ -95,12 +109,33 @@ class Compiler {
         }
         return { line, column };
     }
-    error(message, kind) {
+    error(message, kind, fn, start, end) {
         const { line, column } = this.locate(this.index);
-        const err = new CompileError(message, line, column, this.index, kind);
+        const err = new CompileError(message, line, column, this.index, kind, start, Math.min(end, this.code.length), fn.name);
         if (!this.recover)
             throw err;
         this.errors.push(err);
+    }
+    unclosed(ref) {
+        const open = this.opens[this.opens.length - 1];
+        this.error(`Function ${ref.fn.name} is missing brace closure`, "missing-closure", ref.fn, open, open + 1);
+    }
+    /**
+     * Where the extra arguments of a call end: its `]`, found by reading ahead the way the parser
+     * would (escapes and nested brackets of later calls are skipped approximately), or the end.
+     */
+    extraEnd(from) {
+        let depth = 0;
+        for (let i = from; i < this.code.length; i++) {
+            const ch = this.code[i];
+            if (ch === "\\")
+                i++;
+            else if (ch === "[")
+                depth++;
+            else if (ch === "]" && depth-- === 0)
+                return i;
+        }
+        return this.code.length;
     }
     /** `\x`: the character after the backslash, never a call. Past the end it is `"undefined"`, as in ForgeScript. */
     escape() {
@@ -147,12 +182,13 @@ class Compiler {
         const nameEnd = this.index;
         const hasFields = this.char() === exports.Syntax.Open;
         if (!hasFields && fn.args?.required) {
-            this.error(`Function ${fn.name} requires brackets`, "requires-brackets");
+            this.error(`Function ${fn.name} requires brackets`, "requires-brackets", fn, m.index, nameEnd);
             return this.prepare(m, null, nameEnd);
         }
         if (!hasFields || fn.args === null)
             return this.prepare(m, null, nameEnd);
         const open = this.index++;
+        this.opens.push(open);
         const fields = [];
         const separators = [];
         const specs = fn.args.fields;
@@ -173,7 +209,8 @@ class Compiler {
             if (!spec.rest)
                 separators.push(this.index - 1);
             if (i + 1 === specs.length) {
-                this.error(`Function ${fn.name} expects ${specs.length} arguments at most`, "too-many-args");
+                const extra = this.index;
+                this.error(`Function ${fn.name} expects ${specs.length} arguments at most`, "too-many-args", fn, extra, this.extraEnd(extra));
                 // Recovering: read the extra arguments so the rest of the code stays in step.
                 for (;;) {
                     fields.push(this.parseAnyField(m, RECOVER_FIELD));
@@ -184,6 +221,7 @@ class Compiler {
                 break;
             }
         }
+        this.opens.pop();
         const call = this.prepare(m, fields, nameEnd);
         call.open = open;
         call.close = this.back() === exports.Syntax.Close && fields.length ? this.index - 1 : null;
@@ -250,7 +288,7 @@ class Compiler {
         const start = this.index;
         const acc = { value: "", raw: "", functions: [] };
         if (!this.readField(acc))
-            this.error(`Function ${ref.fn.name} is missing brace closure`, "missing-closure");
+            this.unclosed(ref);
         return { kind: "field", ...acc, start, end: this.at() };
     }
     parseConditionField(ref) {
@@ -277,7 +315,7 @@ class Compiler {
             return true;
         });
         if (!closed)
-            this.error(`Function ${ref.fn.name} is missing brace closure`, "missing-closure");
+            this.unclosed(ref);
         if (op !== null) {
             const rhs = { kind: "field", ...acc, start: opStart + op.length, end: this.at() };
             return { kind: "condition", op, lhs: lhs, rhs, opStart, start, end: this.at() };

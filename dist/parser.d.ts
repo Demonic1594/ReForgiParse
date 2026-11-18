@@ -72,13 +72,25 @@ export declare class CompileError extends Error {
     readonly line: number;
     /** 0-based, in UTF-16 units, as ForgeScript reports it. */
     readonly column: number;
+    /** Where ForgeScript's position is (`line` and `column`), as an offset into the source. */
     readonly offset: number;
     readonly kind: CompileErrorKind;
+    /** The part of the source the error is about: the call's name, the extra arguments, or the unclosed `[`. */
+    readonly start: number;
+    readonly end: number;
+    /** The function the error is about, with `$`. */
+    readonly fn: string;
     constructor(message: string, 
     /** 1-based, as ForgeScript reports it. */
     line: number, 
     /** 0-based, in UTF-16 units, as ForgeScript reports it. */
-    column: number, offset: number, kind: CompileErrorKind);
+    column: number, 
+    /** Where ForgeScript's position is (`line` and `column`), as an offset into the source. */
+    offset: number, kind: CompileErrorKind, 
+    /** The part of the source the error is about: the call's name, the extra arguments, or the unclosed `[`. */
+    start?: number, end?: number, 
+    /** The function the error is about, with `$`. */
+    fn?: string);
 }
 export interface ParseResult {
     /** The source. */

@@ -18,4 +18,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 __exportStar(require("./table"), exports);
 __exportStar(require("./parser"), exports);
 __exportStar(require("./names"), exports);
+__exportStar(require("./extract"), exports);
+__exportStar(require("./project"), exports);
+__exportStar(require("./rules"), exports);
 //# sourceMappingURL=index.js.map
