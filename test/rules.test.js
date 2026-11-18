@@ -52,7 +52,7 @@ test("the messages say what ForgeScript does", () => {
     assert.match(messages("$color[blue]", "color-value")[0], /hexadecimal up to its first non-hex letter: #00000b\. Write Blue/)
     assert.match(messages("$color[123456]", "color-value")[0], /decimal number 123456 \(#01e240\), not as #123456/)
     assert.match(messages("$addButton[id;label;primary]", "invalid-argument")[0], /"style" must be Primary \(letter case matters\), not "primary"/)
-    assert.match(messages("$round[abc]", "invalid-argument")[0], /^\$round: "number" must be a number, not "abc"\. ForgeScript stops the command with "invalid argument"$/)
+    assert.match(messages("$round[abc]", "invalid-argument")[0], /^\$round: "number" must be a number, not "abc"\. ForgeScript stops the command: "Given value abc for argument number is not of type Number"$/)
     assert.match(messages("$createGuild[Test;http://example.com/a.png]", "http-url")[0], /https:\/\/cdn\.discordapp\.com\/emojis\/undefined\.png/)
     assert.match(messages("$let[x;$ping]", "hidden-output")[0], /\$!ping does that/)
 })

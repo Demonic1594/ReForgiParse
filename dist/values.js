@@ -37,7 +37,7 @@ class ValueChecker {
         const refused = (expected) => ({
             severity: "error",
             rule: "invalid-argument",
-            message: `${fn}: "${param.name}" must be ${expected}, not ${JSON.stringify(text)}. ForgeScript stops the command with "invalid argument"`,
+            message: `${fn}: "${param.name}" must be ${expected}, not ${JSON.stringify(text)}. ForgeScript stops the command: "Given value ${text} for argument ${param.name} is not of type ${type}"`,
         });
         if (ID_TYPES.has(type))
             return this.idRegex.test(text) ? null : refused("an ID (16 to 23 digits)");
@@ -89,7 +89,7 @@ class ValueChecker {
         if (/^[0-9a-fA-F]{1,6}$/.test(text))
             return null;
         if (Number.isNaN(value))
-            return warn(`${JSON.stringify(text)} is not a colour, so the embed gets an invalid colour${named ? `. Colour names are written like ${named}` : ""}`);
+            return warn(`${JSON.stringify(text)} is not a colour, so the embed gets none${named ? `. Colour names are written like ${named}` : ""}`);
         return warn(`${JSON.stringify(text)} is not a colour name, so it is read as hexadecimal up to its first non-hex letter: #${value.toString(16).padStart(6, "0")}${named ? `. Write ${named}` : ""}`);
     }
     resolve(type, text, param) {

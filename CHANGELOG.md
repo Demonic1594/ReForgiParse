@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Every rule's claim is now checked by running its example on ForgeScript's real interpreter (`test/runtime.test.js`), on ForgeScript 2.8.0 and 2.5.0.
+- That corrected three messages: `too-few-arguments` and `invalid-argument` now quote ForgeScript's actual errors ("Function $addField is missing argument value", "Given value abc for argument number is not of type Number"), and `color-value` says an unreadable colour leaves the embed with none (it was "an invalid colour").
+- The rules for contributors moved from `CLAUDE.md` to `CONTRIBUTING.md`.
+
 ## 0.3.0
 
 - **Argument values** are checked by the installed ForgeScript's own resolvers: `invalid-argument` (numbers, booleans, durations, enum values with a letter-case hint, permissions, IDs), and two values ForgeScript accepts but misreads: `color-value` (`$color[blue]` is `#00000b`, `$color[123456]` is decimal) and `http-url` (an `http://` link becomes a broken emoji URL).

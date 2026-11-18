@@ -17,8 +17,8 @@ exports.Rules = {
     "missing-brackets": { severity: "error", description: "A function that needs brackets has none. ForgeScript refuses to compile the code." },
     "too-many-arguments": { severity: "error", description: "More arguments than the function takes. ForgeScript refuses to compile the code." },
     "unclosed-bracket": { severity: "error", description: "A `[` that is never closed. ForgeScript refuses to compile the code." },
-    "too-few-arguments": { severity: "error", description: "A required argument is missing: the command stops with \"missing argument\"." },
-    "invalid-argument": { severity: "error", description: "An argument ForgeScript cannot read as its type: the command stops with \"invalid argument\"." },
+    "too-few-arguments": { severity: "error", description: "A required argument is missing: the command stops (\"Function $x is missing argument y\")." },
+    "invalid-argument": { severity: "error", description: "An argument ForgeScript cannot read as its type: the command stops (\"Given value ... is not of type ...\")." },
     "unexpected-brackets": { severity: "warning", description: "Brackets after a function that takes no arguments: they and their text are printed." },
     "unknown-function": { severity: "warning", description: "A `$name` that is no function here, so it is printed as text." },
     "glued-name": { severity: "warning", description: "A `$name` whose start is another function: that one runs, and the rest is printed." },
@@ -68,7 +68,7 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         if (call.fields && fn.params && fn.unwrap) {
             const missing = missingArgument(fn, call.fields);
             if (missing)
-                add("too-few-arguments", `${call.name} is missing its argument "${missing}". Usage: ${(0, table_1.usage)(fn)}`, call.start, call.close !== null ? call.close + 1 : call.end);
+                add("too-few-arguments", `${call.name} is missing its argument "${missing}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${missing}". Usage: ${(0, table_1.usage)(fn)}`, call.start, call.close !== null ? call.close + 1 : call.end);
             if (options.values) {
                 call.fields.forEach((field, i) => {
                     const param = paramAt(fn.params, i);

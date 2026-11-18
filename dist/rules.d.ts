@@ -26,11 +26,11 @@ export declare const Rules: {
     };
     readonly "too-few-arguments": {
         readonly severity: "error";
-        readonly description: "A required argument is missing: the command stops with \"missing argument\".";
+        readonly description: "A required argument is missing: the command stops (\"Function $x is missing argument y\").";
     };
     readonly "invalid-argument": {
         readonly severity: "error";
-        readonly description: "An argument ForgeScript cannot read as its type: the command stops with \"invalid argument\".";
+        readonly description: "An argument ForgeScript cannot read as its type: the command stops (\"Given value ... is not of type ...\").";
     };
     readonly "unexpected-brackets": {
         readonly severity: "warning";

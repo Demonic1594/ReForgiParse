@@ -34,7 +34,7 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 1 error(s), 2 warning(s) in 1 file(s) under . (functions: @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0)
 ```
 
-> **Status: 0.3.0.** Checks and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: a formatter, a config file with comments to turn rules off, and editor support. The API may change before 1.0.
+> **Status: 0.3.1.** Checks and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: a formatter, a config file with comments to turn rules off, and editor support. The API may change before 1.0.
 
 ## Contents
 
@@ -167,9 +167,9 @@ Offsets are UTF-16 indexes, like JavaScript string indexes.
 
 ## How it is tested
 
-`npm test` (33 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
+`npm test` (44 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
 
-**ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ForgeParse. `npm run parity` runs that diff; `FORGEPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CLAUDE.md`](CLAUDE.md).
+**ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ForgeParse. `npm run parity` runs that diff; `FORGEPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 What `npm test` checks:
 
@@ -177,6 +177,7 @@ What `npm test` checks:
 - **Positions**: every offset points at the character it names. **Recovery**: without errors the tree is strict mode's; with errors the first is ForgeScript's.
 - **Reading files**: 15,000 random string and template literals read by ForgeParse and evaluated by Node must be equal.
 - **Every rule**, on code that has the problem and code that does not, with ForgeScript's resolvers deciding.
+- **Every rule's claim, on ForgeScript's interpreter**: each rule's example is run offline on ForgeScript's real interpreter, and ForgeScript must do what the message says. Where a message quotes ForgeScript's error, ForgeScript must log exactly that text.
 - **A whole bot**: an exact list of findings at their lines and columns; the command line's text, JSON and GitHub output and exit codes; an extension without metadata.
 
 Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx forgeparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings.
