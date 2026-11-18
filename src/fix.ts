@@ -10,14 +10,21 @@
 // --fix-brackets changes what the bot sends, on purpose: it escapes a [ in an argument's text and the
 // ] that closed the function too early, so the text is printed as it was written. Each edit is kept
 // only if it removes the problem and adds no compile error.
+//
+// --reindent is opt-in, because the whitespace it changes can reach what the bot sends: inside an
+// argument it is part of the value, and ForgeScript only trims the two ends of a message. It sets
+// the indentation of lines that start with a function, a ; or a ], by nesting depth, and nothing
+// else; the result must parse the same apart from that whitespace. It leaves a line alone when the
+// argument it is in also has text (the whitespace would sit among words that are sent), and inside a
+// condition (where it is part of what is compared).
 
 import { CodeSource, extractCode } from "./extract"
-import { AnyField, Call, parse, ParseResult, walk } from "./parser"
+import { AnyField, Call, Field, parse, ParseResult, walk } from "./parser"
 import { declaredSpelling, unescapedBrackets } from "./rules"
 import { FunctionTable } from "./table"
 
 export interface Fix {
-    rule: "function-case" | "unescaped-bracket"
+    rule: "function-case" | "unescaped-bracket" | "reindent"
     /** File offset of the first character changed, in the text before the fix. */
     offset: number
     description: string
@@ -26,8 +33,14 @@ export interface Fix {
 export interface FixOptions {
     /** Properties whose strings are code (default `["code"]`). */
     properties?: string[]
-    /** Also escape brackets that close a function too early (changes what the bot sends). */
+    /** Fix the letter case of names (default true). */
+    case?: boolean
+    /** Escape brackets that close a function too early (changes what the bot sends). */
     brackets?: boolean
+    /** Re-indent lines that start with a function, ; or ] (can change what the bot sends). */
+    reindent?: boolean
+    /** Spaces per level, or "tab". Default: detected from the code, else 4. */
+    indent?: number | "tab"
 }
 
 export interface FixResult {
@@ -42,8 +55,9 @@ export function fixText(text: string, table: FunctionTable, options: FixOptions 
     const properties = options.properties?.length ? options.properties : ["code"]
     const fixes: Fix[] = []
     const skipped: Fix[] = []
-    text = fixCase(text, table, properties, fixes, skipped)
+    if (options.case !== false) text = fixCase(text, table, properties, fixes, skipped)
     if (options.brackets) text = fixBrackets(text, table, properties, fixes, skipped)
+    if (options.reindent) text = reindent(text, table, properties, options.indent, fixes, skipped)
     return { text, fixes, skipped }
 }
 
@@ -138,6 +152,116 @@ function fixBrackets(text: string, table: FunctionTable, properties: string[], f
             if (applied) break
         }
         if (!applied) break
+    }
+    return text
+}
+
+/** The nesting depth at a position: how many calls with brackets enclose it. */
+function depthAt(calls: Call[], at: number): number {
+    return calls.filter((c) => c.open !== null && c.open < at && at <= (c.close ?? Infinity)).length
+}
+
+/** The same parse, apart from whitespace at the start of lines. */
+function sameIgnoringIndent(a: ParseResult, b: ParseResult): boolean {
+    const norm = (v: string) => v.replace(/\n[ \t]*/g, "\n")
+    const field = (f: AnyField): unknown => (f.kind === "condition" ? [f.op, field(f.lhs), f.rhs && field(f.rhs)] : [norm(f.value), f.functions.map(call)])
+    const call = (c: Call): unknown => [c.name, c.index, c.negated, c.silent, c.count, c.fields?.map(field) ?? null]
+    return !a.errors.length && !b.errors.length && JSON.stringify([norm(a.code), a.functions.map(call)]) === JSON.stringify([norm(b.code), b.functions.map(call)])
+}
+
+function reindent(text: string, table: FunctionTable, properties: string[], indent: number | "tab" | undefined, fixes: Fix[], skipped: Fix[]): string {
+    // From the end of the file, so earlier offsets stay valid.
+    const sources = extractCode(text, properties).filter((s) => usable(s) && text[s.start] === "`" && s.value.includes("\n"))
+    for (const src of sources.reverse()) {
+        const res = parse(src.value, table, { recover: true })
+        if (res.errors.length) {
+            skipped.push({ rule: "reindent", offset: src.start, description: "not re-indented: the code does not compile" })
+            continue
+        }
+        const calls = Array.from(walk(res.functions))
+        const starts = new Map(calls.map((c) => [c.start, c]))
+        // Where each line's whitespace ends up: the innermost argument around it, or the top level.
+        type Container = { start: number; end: number; condition: boolean; field: Field | null }
+        const containers: Container[] = [{ start: 0, end: src.value.length, condition: false, field: null }]
+        for (const c of calls) {
+            for (const f of c.fields ?? []) {
+                if (f.kind === "condition") containers.push({ start: f.start, end: f.end, condition: true, field: null })
+                else containers.push({ start: f.start, end: f.end, condition: false, field: f })
+            }
+        }
+        const containerOf = (at: number) => containers.filter((x) => x.start <= at && at <= x.end).sort((a, b) => a.end - a.start - (b.end - b.start))[0]
+        const hasText = (x: Container) => {
+            const fns = x.field ? x.field.functions : res.functions
+            let k = 0
+            for (let i = x.start; i < (x.field ? x.end : src.value.length); i++) {
+                const inner = fns[k]
+                if (inner && i === inner.start) {
+                    i = inner.end - 1
+                    k++
+                    continue
+                }
+                if (!/\s/.test(src.value[i])) return true
+            }
+            return false
+        }
+        const owner = new Map<number, Call>()
+        for (const c of calls) {
+            for (const sep of c.separators) owner.set(sep, c)
+            if (c.close !== null) owner.set(c.close, c)
+        }
+        // Each line after the first: its indentation, and the depth it should have, when it starts with a call, ; or ].
+        const lines: Array<{ start: number; first: number; depth: number }> = []
+        // The bot's own indentation for top-level functions, from every such line (moved or not).
+        let base: string | null = null
+        for (let i = src.value.indexOf("\n"); i >= 0; i = src.value.indexOf("\n", i + 1)) {
+            const start = i + 1
+            let first = start
+            while (src.value[first] === " " || src.value[first] === "\t") first++
+            if (first >= src.value.length || src.value[first] === "\n") continue
+            const call = starts.get(first)
+            const own = owner.get(first)
+            if (!call && !own) continue
+            const depth = call ? depthAt(calls, first) : depthAt(calls, own!.start)
+            if (call && depth === 0 && base === null) base = src.value.slice(start, first)
+            const where = containerOf(first)
+            if (where.condition || hasText(where)) {
+                const why = where.condition ? "it is inside a condition, where whitespace is compared" : "its argument also has text, so this whitespace is sent with it"
+                skipped.push({ rule: "reindent", offset: src.offsets[start] ?? src.start, description: `not re-indented: ${why}` })
+                continue
+            }
+            lines.push({ start, first, depth })
+        }
+        if (!lines.length) continue
+        const current = (l: { start: number; first: number }) => src.value.slice(l.start, l.first)
+        base ??= ""
+        let unit = indent === "tab" ? "\t" : typeof indent === "number" ? " ".repeat(indent) : ""
+        if (!unit) {
+            const nested = lines.filter((l) => l.depth > 0).map((l) => current(l))
+            if (nested.some((w) => w.startsWith(base! + "\t"))) unit = "\t"
+            else {
+                const steps = lines.filter((l) => l.depth > 0).map((l) => (current(l).length - base!.length) / l.depth).filter((n) => Number.isInteger(n) && n > 0)
+                unit = " ".repeat(steps.length ? Math.min(...steps) : 4)
+            }
+        }
+        let next = text
+        const changed: Fix[] = []
+        for (const l of [...lines].reverse()) {
+            const want = base! + unit.repeat(l.depth)
+            if (current(l) === want) continue
+            const from = l.first > l.start ? plainSpan(text, src, l.start, l.first) : src.offsets[l.first]
+            if (from === null || from === undefined || text[src.offsets[l.first]] !== src.value[l.first]) continue
+            const to = src.offsets[l.first]
+            next = next.slice(0, from) + want + next.slice(to)
+            changed.push({ rule: "reindent", offset: from, description: `indent ${JSON.stringify(current(l))} → ${JSON.stringify(want)}` })
+        }
+        if (!changed.length) continue
+        const after = extractCode(next, properties).find((s) => s.start === src.start)
+        if (!after || !sameIgnoringIndent(res, parse(after.value, table, { recover: true }))) {
+            skipped.push({ rule: "reindent", offset: src.start, description: "not re-indented: the code would parse differently" })
+            continue
+        }
+        text = next
+        fixes.push(...changed.reverse())
     }
     return text
 }

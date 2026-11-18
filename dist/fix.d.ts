@@ -1,7 +1,7 @@
 import { ParseResult } from "./parser";
 import { FunctionTable } from "./table";
 export interface Fix {
-    rule: "function-case" | "unescaped-bracket";
+    rule: "function-case" | "unescaped-bracket" | "reindent";
     /** File offset of the first character changed, in the text before the fix. */
     offset: number;
     description: string;
@@ -9,8 +9,14 @@ export interface Fix {
 export interface FixOptions {
     /** Properties whose strings are code (default `["code"]`). */
     properties?: string[];
-    /** Also escape brackets that close a function too early (changes what the bot sends). */
+    /** Fix the letter case of names (default true). */
+    case?: boolean;
+    /** Escape brackets that close a function too early (changes what the bot sends). */
     brackets?: boolean;
+    /** Re-indent lines that start with a function, ; or ] (can change what the bot sends). */
+    reindent?: boolean;
+    /** Spaces per level, or "tab". Default: detected from the code, else 4. */
+    indent?: number | "tab";
 }
 export interface FixResult {
     text: string;

@@ -152,3 +152,8 @@ test("directives: $c[reforgiparse-...] prints nothing, wherever it is", async ()
         assert.equal((await run(code)).output, code.startsWith("[") ? "[]" : "ab", code)
     }
 })
+
+test("--reindent leaves conditions alone: whitespace in a condition is compared", async () => {
+    assert.equal((await run("$if[1==1;yes;no]")).output, "yes")
+    assert.equal((await run("$if[\n      1==1;yes;no]")).output, "no")
+})

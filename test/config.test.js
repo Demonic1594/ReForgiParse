@@ -143,3 +143,64 @@ test("the command line writes the fixes and reports them", () => {
     assert.equal(brackets.status, 0)
     assert.doesNotMatch(brackets.stdout, /unescaped-bracket/)
 })
+
+const NESTED = "module.exports = {\n    code: `$let[a;1]\n$if[$get[a]==1;\n$title[One]\n        $sum[1;1]\n          ;\n  $title[Other]\n      ]\nSome text stays\n$sendMessage[$channelID;Hi]`\n}\n"
+
+test("--reindent: lines starting with a function, ; or ] by nesting; text and blank lines left alone", () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const two = fixText(NESTED, table, { case: false, reindent: true, indent: 2 })
+    assert.equal(two.text, "module.exports = {\n    code: `$let[a;1]\n$if[$get[a]==1;\n  $title[One]\n  $sum[1;1]\n;\n  $title[Other]\n]\nSome text stays\n$sendMessage[$channelID;Hi]`\n}\n")
+    assert.equal(two.fixes.length, 4)
+    assert.match(fixText(NESTED, table, { case: false, reindent: true, indent: "tab" }).text, /\n\t\$title\[One\]\n\t\$sum\[1;1\]\n;\n/)
+    // A line that starts with text keeps its indentation, and so does every line of an argument that
+    // has text: that whitespace is sent with the words (as in a poll's list of options).
+    const text = "module.exports = { code: `$if[1==1;\n      hello $sum[1;1]\n    $title[x]\n]` }"
+    const withText = fixText(text, table, { case: false, reindent: true, indent: 2 })
+    assert.equal(withText.text, text)
+    assert.match(withText.skipped[0].description, /its argument also has text, so this whitespace is sent with it/)
+    // Inside a condition, whitespace is part of what is compared: never moved.
+    const condition = "module.exports = { code: `$if[\n      $get[a]==1;yes;no]` }"
+    const kept = fixText(condition, table, { case: false, reindent: true, indent: 2 })
+    assert.equal(kept.text, condition)
+    assert.match(kept.skipped[0].description, /inside a condition, where whitespace is compared/)
+    // Opt-in: without it, nothing moves.
+    assert.equal(fixText(NESTED, table).text, NESTED)
+    // Code that does not compile, and a plain quoted string, are left alone.
+    const broken = "module.exports = { code: `$if[1==1;\n      $title[x]\n` }"
+    assert.equal(fixText(broken, table, { case: false, reindent: true }).text, broken)
+    const quoted = 'module.exports = { code: "$if[1==1;\\n      $title[x]\\n]" }'
+    assert.equal(fixText(quoted, table, { case: false, reindent: true }).text, quoted)
+})
+
+test("--reindent: ForgeScript's compiler sees the same code apart from indentation, and the interpreter shows why it is opt-in", async () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const after = fixText(NESTED, table, { case: false, reindent: true, indent: 2 }).text
+    const norm = (x) => JSON.stringify(x).replace(/\\n[ \\t]*/g, "\\n")
+    assert.equal(norm(compiled(extractCode(after)[0].value)), norm(compiled(extractCode(NESTED)[0].value)))
+    assert.notEqual(JSON.stringify(compiled(extractCode(after)[0].value)), JSON.stringify(compiled(extractCode(NESTED)[0].value)))
+
+    const { ForgeClient, Compiler, Interpreter } = forgescript
+    const out = process.stdout.write
+    process.stdout.write = () => true
+    const client = new ForgeClient({ intents: ["Guilds"] })
+    process.stdout.write = out
+    const run = (code) => Interpreter.run({ client, data: Compiler.compile(code), obj: { channel: { id: "1" } }, command: null, doNotSend: true, allowTopLevelReturn: true })
+    const file = "module.exports = { code: `$if[1==1;\n$sum[1;1]\n]` }"
+    const moved = fixText(file, table, { case: false, reindent: true, indent: 4 }).text
+    assert.equal(await run(extractCode(file)[0].value), "\n2\n")
+    assert.equal(await run(extractCode(moved)[0].value), "\n    2\n", "the indentation is part of what $if returns")
+})
+
+test("--reindent on the command line, and the indent option", () => {
+    const dir = bot({ "commands/a.js": NESTED, "reforgiparse.config.json": JSON.stringify({ indent: 2 }) })
+    const plain = spawnSync(process.execPath, [CLI], { cwd: dir, encoding: "utf8" })
+    assert.equal(fs.readFileSync(path.join(dir, "commands/a.js"), "utf8"), NESTED, "not without --reindent")
+    assert.equal(plain.status, 0)
+    const r = spawnSync(process.execPath, [CLI, "--reindent"], { cwd: dir, encoding: "utf8" })
+    assert.match(r.stderr, /^fixed {2}commands\/a\.js:4:1 {2}indent "" → " {2}"$/m)
+    assert.match(fs.readFileSync(path.join(dir, "commands/a.js"), "utf8"), /\n {2}\$title\[One\]\n {2}\$sum\[1;1\]\n;\n/)
+    fs.writeFileSync(path.join(dir, "reforgiparse.config.json"), JSON.stringify({ indent: "two" }))
+    assert.throws(() => Project.load(dir), /"indent" must be a number of spaces from 1 to 8, or "tab", not "two"/)
+})

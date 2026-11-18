@@ -1,42 +1,78 @@
 # Contributing to ReForgiParse
 
-ReForgiParse promises that it reads code exactly as ForgeScript does, and that every rule says what
-ForgeScript really does with the code. These rules keep that promise.
+ReForgiParse makes two guarantees:
 
-## ForgeScript is the reference
+1. It parses code exactly as ForgeScript's compiler does.
+2. Every finding describes what ForgeScript actually does with the code.
 
-1. **Diff every parsing change against ForgeScript's compiler.** Anything in `src/parser.ts`,
-   `src/table.ts`, `src/names.ts`, or in how a project's functions are loaded, is compared with
-   `new Compiler(undefined, code).compile()` of the installed `@tryforge/forgescript`, given the same
-   function list, before it is committed:
-   - `npm run parity`: a hand-written corpus and 20,000 seeded random inputs.
-   - `REFORGIPARSE_CORPUS=<folder of bots or docs> npm run parity`: every ForgeScript snippet under it.
-   - The oldest supported ForgeScript: `npm i --no-save @tryforge/forgescript@2.5.0 && npm test`, then `npm ci`.
+The requirements below exist to keep both.
 
-   Tree, template and compile errors (message, line, column) must be identical. A difference means
-   ReForgiParse is wrong, never ForgeScript: match it, quirks included.
-2. **Put new kinds of input into the diff.** A bug or a new syntax case goes into
-   `test/support/corpus.js`, and a whole class of input into `test/support/fuzz.js`. Show the test
-   fails without the fix.
-3. **Show the diff can fail.** After changing the parser or the tests, break the parser on purpose
-   (column counting, escapes, an error kind) and check the tests go red. Then restore it.
+## Development
 
-## Rules state facts, checked in ForgeScript
+```bash
+npm ci
+npm test         # builds, then runs the full suite
+npm run parity   # builds, then runs the parser comparison only
+```
 
-4. **A rule's message says what ForgeScript does**, and that is checked in ForgeScript itself: in its
-   source (the installed `dist/`; name the file in the pull request) and, wherever it can run
-   offline, by running it. `test/runtime.test.js` runs each rule's example on ForgeScript's real
-   interpreter and checks the outcome; a message that quotes ForgeScript's error must quote exactly
-   what ForgeScript logs. Prefer calling ForgeScript's own code (its resolvers, `Conditions`,
-   `Compiler`) over copying its logic, so a check follows the bot's version. Never write
-   "ForgeScript does X" from memory.
-5. **Working bots stay clean.** Before a release, run `npx reforgiparse` on working bots with their
-   extensions installed. Every finding there is a bug in ReForgiParse until shown otherwise.
+Requires Node.js 18.17 or later.
+
+## Parser changes
+
+These requirements apply to `src/parser.ts`, `src/table.ts`, `src/names.ts` and the code that loads a project's functions.
+
+### Compare with ForgeScript's compiler
+
+Every change is compared with `new Compiler(undefined, code).compile()` from the installed `@tryforge/forgescript`, using the same function list:
+
+| Command | Coverage |
+|---|---|
+| `npm run parity` | Hand-written corpus and 20,000 seeded generated inputs. |
+| `REFORGIPARSE_CORPUS=<folder> npm run parity` | Every ForgeScript snippet in a folder of bots or documentation. |
+| `npm i --no-save @tryforge/forgescript@2.5.0 && npm test`, then `npm ci` | The oldest supported ForgeScript version. |
+
+The tree, the template and the compile errors (message, line and column) must be identical. ForgeScript defines the language, so any difference is a defect in ReForgiParse, including differences in ForgeScript's quirks.
+
+### Add regression inputs
+
+Add a specific case to `test/support/corpus.js`, or a class of inputs to the generator in `test/support/fuzz.js`. The test must fail without the change. This keeps the case covered by every later comparison.
+
+### Confirm the tests can fail
+
+After changing the parser or its tests, introduce a deliberate fault (for example in column counting, escape handling or an error kind), confirm the suite fails, then revert it. A comparison that cannot fail does not verify anything.
+
+## Rules
+
+### Verify every claim in ForgeScript
+
+A rule's message states what ForgeScript does, and that statement must be verified in ForgeScript itself:
+
+- **In its source.** Use the installed `dist/` and cite the file in the pull request.
+- **At runtime, where possible.** `test/runtime.test.js` runs each rule's example on ForgeScript's interpreter wherever this works without Discord.
+
+A message that quotes a ForgeScript error must match the logged text exactly. Do not describe ForgeScript's behaviour from memory.
+
+### Prefer ForgeScript's own code
+
+Call ForgeScript's resolvers, `Conditions` and `Compiler` instead of reimplementing their logic. Checks then follow the ForgeScript version installed in the bot.
+
+### Keep working bots clean
+
+Before a release, run `npx reforgiparse` on working bots with their extensions installed. Treat any finding there as a defect in ReForgiParse until shown otherwise.
 
 ## Conventions
 
-- Fresh code only, LGPL-3.0-or-later. Do not copy ForgeLint (GPL-3.0-only); ideas may be
-  re-implemented.
-- `dist/` is committed and must match `src/` (CI checks): run `npm run build` before committing.
-- `engines` stays `>=18.17`. No runtime dependencies.
-- Every fix and every rule gets a test that fails without it.
+| Area | Requirement |
+|---|---|
+| License | Contributions are LGPL-3.0-or-later. Do not copy code from ForgeLint, which is GPL-3.0-only; its ideas may be reimplemented independently. |
+| Build output | `dist/` is committed and must match `src/`. Run `npm run build` before committing; CI checks this. |
+| Compatibility | `engines` stays at `>=18.17`. No runtime dependencies. |
+| Tests | Every fix and every rule has a test that fails without it. |
+
+## Pull request checklist
+
+- [ ] `npm test` passes.
+- [ ] Parser changes: `npm run parity` passes on the current and the oldest supported ForgeScript.
+- [ ] Rule changes: the ForgeScript source file behind each claim is cited.
+- [ ] `dist/` is rebuilt.
+- [ ] `CHANGELOG.md` is updated.

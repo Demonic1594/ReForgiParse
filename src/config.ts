@@ -19,6 +19,8 @@ export interface Config {
     properties?: string[]
     /** Functions made when the bot runs, which no file defines: never reported as unknown. */
     known?: string[]
+    /** For --reindent: spaces per level, or "tab". Default: detected from the code, else 4. */
+    indent?: number | "tab"
 }
 
 export const CONFIG_FILE = "reforgiparse.config.json"
@@ -82,12 +84,17 @@ function validate(raw: unknown, where: string): Config {
         return list as string[]
     }
     for (const key of Object.keys(raw)) {
-        if (!["rules", "include", "exclude", "properties", "known", "$schema"].includes(key)) throw new ConfigError(where, `unknown option "${key}" (options: rules, include, exclude, properties, known)`)
+        if (!["rules", "include", "exclude", "properties", "known", "indent", "$schema"].includes(key)) throw new ConfigError(where, `unknown option "${key}" (options: rules, include, exclude, properties, known, indent)`)
     }
     out.include = strings("include")
     out.exclude = strings("exclude")
     out.properties = strings("properties")
     out.known = strings("known")
+    const indent = (raw as Record<string, unknown>).indent
+    if (indent !== undefined) {
+        if (indent !== "tab" && !(typeof indent === "number" && Number.isInteger(indent) && indent >= 1 && indent <= 8)) throw new ConfigError(where, `"indent" must be a number of spaces from 1 to 8, or "tab", not ${JSON.stringify(indent)}`)
+        out.indent = indent
+    }
     const rules = (raw as Record<string, unknown>).rules
     if (rules !== undefined) {
         if (!rules || typeof rules !== "object" || Array.isArray(rules)) throw new ConfigError(where, `"rules" must be an object of rule names and levels`)

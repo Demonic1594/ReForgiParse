@@ -1,15 +1,54 @@
 # ReForgiParse
 
-**Find the mistakes in a ForgeScript bot before it runs, the way ForgeScript itself would see them.**
+Static analysis for [ForgeScript](https://github.com/tryforge/ForgeScript) bots, built on a parser that matches ForgeScript's own compiler.
 
-ReForgiParse reads a bot's commands with a parser that gives exactly what ForgeScript's own compiler gives, then checks them with rules that each state what ForgeScript does with the code: refuses to compile it, stops the command, or quietly does something else than what was written.
+ReForgiParse checks the ForgeScript code in a bot's source files and reports code that will not compile, arguments ForgeScript will reject, names it will print as text, and code that runs differently from how it reads. Every finding describes what ForgeScript actually does with the code.
+
+## Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Rules](#rules)
+- [Fixes](#fixes)
+- [Configuration](#configuration)
+- [Inline directives](#inline-directives)
+- [Editor integration](#editor-integration)
+- [Continuous integration](#continuous-integration)
+- [API](#api)
+- [Migrating from ForgeLint](#migrating-from-forgelint)
+- [Testing](#testing)
+- [License](#license)
+
+## Features
+
+- **Compiler-accurate parsing.** Produces the same tree and the same compile errors, at the same line and column, as ForgeScript's compiler.
+- **Argument validation by ForgeScript itself.** Numbers, booleans, durations, colours, URLs, permissions and enum values are validated with the resolvers of the ForgeScript version installed in the bot.
+- **Project awareness.** Loads ForgeScript, every installed extension and the bot's custom functions, and checks each command's event type.
+- **Precise locations.** Findings point to the exact file, line and column, through JavaScript escapes and template literals.
+- **Safe fixes.** Automatic fixes are applied only when they cannot change the bot's behaviour; fixes that do are opt-in and labelled.
+- **Editor support.** A built-in language server and an embeddable core.
+- **No runtime dependencies.**
+
+## Installation
 
 ```bash
-npm i -D github:Demonic1594/ReForgiParse
-npx reforgiparse
+npm install --save-dev github:Demonic1594/ReForgiParse
 ```
 
-For this command:
+Requires Node.js 18.17 or later and `@tryforge/forgescript` 2.5.0 or later installed in the bot.
+
+## Usage
+
+Run in the bot's root folder:
+
+```bash
+npx reforgiparse                     # check the whole bot
+npx reforgiparse commands/daily.js   # check specific files
+npx reforgiparse --fix               # apply safe fixes, then check
+```
+
+Given this command:
 
 ```js
 module.exports = {
@@ -24,7 +63,7 @@ $sendMesage[$channelID;Done]`
 }
 ```
 
-it says:
+ReForgiParse reports:
 
 ```
 commands/shop.js:5:20  error    $addButton: "style" must be Primary (letter case matters), not "primary". ForgeScript stops the command: "Given value primary for argument style is not of type Enum"  [invalid-argument]
@@ -34,128 +73,86 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 1 error(s), 2 warning(s) in 1 file(s) under . (functions: @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0)
 ```
 
-> **Status: 0.4.0.** Checks, fixes and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: editor support. The API may change before 1.0.
+### Options
 
-## Contents
-
-1. [Why ReForgiParse](#why-reforgiparse)
-2. [Checking a bot](#checking-a-bot)
-3. [Rules](#rules)
-4. [Fixing](#fixing)
-5. [Config](#config)
-6. [Turning rules off in code](#turning-rules-off-in-code)
-7. [In CI](#in-ci)
-8. [Using the parser](#using-the-parser)
-9. [How it is tested](#how-it-is-tested)
-10. [Compared with ForgeLint](#compared-with-forgelint)
-11. [Licence](#licence)
-
-## Why ReForgiParse
-
-- **It agrees with ForgeScript, by construction.** The parser follows ForgeScript's compiler step by step: the same tree, the same errors at the same line and column, quirks included (`$pingms` runs `$ping` and prints `ms`). Every test run compares it with the real compiler on thousands of inputs.
-- **ForgeScript decides what a valid argument is.** Numbers, booleans, durations, colours, links, permissions and enum values are checked by calling the resolvers of the ForgeScript your bot has installed, so a check never disagrees with the version you run. That is how it knows that `$color[blue]` is a near-black `#00000b` and that an `http://` link becomes a broken emoji URL.
-- **It knows the whole bot.** ForgeScript, every installed extension (from its metadata, or from its function files when it has none, as the official extensions on npm), your custom functions, and each extension's events.
-- **Few false alarms.** Rules that could be wrong stay quiet instead: variable checks stand down when code calls something whose use of variables cannot be seen, and nothing is reported on `${...}` parts that only exist when the bot runs. All 16 example bots of a ForgeScript knowledge base, which pass their tests, come back clean.
-- **Positions you can click.** Every problem points at the file, line and column of the exact text, through JavaScript's escapes and template literals.
-- **No dependencies.** It uses the ForgeScript the bot already has.
-
-## Checking a bot
-
-Run it in the bot's folder (Node.js 18.17 or newer; the bot's packages installed):
-
-```bash
-npx reforgiparse                       # the whole bot
-npx reforgiparse commands/daily.js     # some files: custom functions are still read from the whole bot
-npx reforgiparse --json                # for other tools
-npx reforgiparse --rules               # what each rule checks
-```
-
-| Option | |
+| Option | Description |
 |---|---|
-| `--format text\|json\|github` | Output: text (default), JSON, or GitHub Actions annotations. `--json` is `--format json`. |
-| `--fix` | Fix what cannot change the bot, then check. See [Fixing](#fixing). |
-| `--fix-brackets` | Also escape brackets that close a function too early. This changes what the bot sends, on purpose. |
-| `--config <file>` | Use this config. Default: `reforgiparse.config.json`, or `"reforgiparse"` in `package.json`. |
-| `--no-warnings` | Errors only. |
-| `--no-info` | Leave out the spelling hints. |
-| `--quiet` | Print nothing when all is well. |
-| `--property <name>` | Also read this property as code (besides `code`). |
+| `--format <text\|json\|github>` | Output format. `github` emits GitHub Actions annotations. `--json` is shorthand for `--format json`. |
+| `--fix` | Apply fixes that cannot change the bot's behaviour, then check. |
+| `--fix-brackets` | Also escape brackets that close a function early. Changes the bot's output. |
+| `--reindent` | Re-indent code by nesting depth. See [Fixes](#fixes). |
+| `--config <file>` | Use a specific configuration file. |
+| `--property <name>` | Also treat this property as code, in addition to `code`. Repeatable. |
+| `--no-warnings` | Report errors only. |
+| `--no-info` | Omit informational findings. |
+| `--quiet` | Print nothing when there are no findings. |
+| `--rules` | List all rules. |
+| `--lsp` | Start the language server. |
 
-The exit code is 1 when there are errors, and 2 for a wrong option or a config that cannot be used.
+Exit codes: `0` no errors, `1` errors found, `2` invalid usage or configuration.
 
-**What it reads**
+### What is checked
 
-- **Code:** the `code:` strings in `.js`, `.ts`, `.cjs`, `.mjs`, `.cts` and `.mts` files, read exactly as JavaScript reads them. It skips `node_modules`, folders starting with a dot, and `dist`, `build`, `docs`, `coverage` and `out` at the top.
-- **Functions:** the installed ForgeScript and every installed dependency that uses it, extensions first as in a bot. An extension without `metadata/functions.json` has its `NativeFunction` files loaded, without starting it: nothing connects to Discord or a database.
-- **Custom functions:** `{ name, params, code }` objects anywhere, and every `{ name, code }` in a `functions` folder. As in ForgeScript, a custom function without `params` takes no arguments.
-- **Events:** ForgeScript's and the extensions', for each command's `type`.
+- **Code:** string values of the `code` property in `.js`, `.ts`, `.cjs`, `.mjs`, `.cts` and `.mts` files. `node_modules`, hidden folders, and top-level `dist`, `build`, `docs`, `coverage` and `out` are skipped.
+- **Functions:** ForgeScript and every installed package that depends on it, in the order a bot loads them. Extensions without `metadata/functions.json` are read from their function files without being started.
+- **Custom functions:** `{ name, params, code }` objects anywhere in the bot, and every `{ name, code }` in a `functions` folder.
+- **Events:** each command's `type` against the events of ForgeScript and its extensions.
 
 ## Rules
 
-Each rule is backed by ForgeScript's source (2.8.0) or by running its own resolvers.
+### Errors
 
-**Errors**: the code does not work.
-
-| Rule | Example | What ForgeScript does |
+| Rule | Example | Effect |
 |---|---|---|
-| `missing-brackets` | `$get` | Refuses to compile the code. |
-| `too-many-arguments` | `$get[a;b]` | Refuses to compile the code. |
-| `unclosed-bracket` | `$get[a` | Refuses to compile the code. |
-| `too-few-arguments` | `$addField[Coins]` | Stops the command: "Function $addField is missing argument value". |
-| `invalid-argument` | `$round[abc]`, `$addButton[id;Hi;primary]`, `$wait[1.5h]` | Stops the command: "Given value abc for argument number is not of type Number". |
-| `unknown-event` | `type: "messageCreat"` | Never runs the command. |
+| `missing-brackets` | `$get` | The code does not compile. |
+| `too-many-arguments` | `$get[a;b]` | The code does not compile. |
+| `unclosed-bracket` | `$get[a` | The code does not compile. |
+| `too-few-arguments` | `$addField[Coins]` | The command stops with an error. |
+| `invalid-argument` | `$round[abc]`, `$wait[1.5h]` | The command stops with an error. |
+| `unknown-event` | `type: "messageCreat"` | The command never runs. |
 
-**Warnings**: the code runs, but not as written.
+### Warnings
 
-| Rule | Example | What ForgeScript does |
+| Rule | Example | Effect |
 |---|---|---|
-| `unknown-function` | `$sendMesage[...]` | Prints it as text. Suggests the closest name. |
-| `glued-name` | `$pingms` | Runs `$ping`, prints `ms`. |
-| `unexpected-brackets` | `$ping[x]` | Prints `[x]`. |
-| `misplaced-operator` | `$#!ping`, `$!$ping` | Prints the call as text (the order is `$!#@[...]`). |
-| `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function; the rest is printed. |
-| `condition-operator` | `$if[a==1&&b==2;...]`, `$if[yes;...]` | Only the first operator counts; `&&` is text; without an operator only `true` is true. |
-| `color-value` | `$color[blue]`, `$color[123456]` | `blue` is `#00000b`; `123456` is decimal, not `#123456`. |
-| `http-url` | an `http://` link where a URL is expected | Turns it into a broken emoji link. |
-| `unused-variable` | `$let[a;1]` with no `$get[a]` | Nothing reads it. |
-| `unset-variable` | `$get[a]` with no `$let[a;...]` | Always empty. |
-| `wrong-store` | `$arrayCreate[list;3]$get[list]` | `$get` reads `$let` variables; arrays and JSON live where `$env` reads. |
-| `deprecated` | `$createGuild[...]` | Marked deprecated by its package. |
-| `unreadable-string` | a `code:` string that does not end where JavaScript would | Not checked. |
-| `unknown-rule` | `$c[reforgiparse-disable-line glued-nme]` | A misspelt rule in a directive: it turns nothing off. |
+| `unknown-function` | `$sendMesage[...]` | Printed as text. |
+| `glued-name` | `$pingms` | Runs `$ping`, then prints `ms`. |
+| `unexpected-brackets` | `$ping[x]` | The brackets and their content are printed. |
+| `misplaced-operator` | `$#!ping` | The call is printed as text. |
+| `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function. |
+| `condition-operator` | `$if[a==1&&b==2;...]` | Only the first operator is evaluated. |
+| `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
+| `http-url` | `http://...` as a URL argument | Converted to an invalid URL. |
+| `unused-variable` | `$let[a;1]` without `$get[a]` | The variable is never read. |
+| `unset-variable` | `$get[a]` without `$let[a;...]` | Always empty. |
+| `wrong-store` | `$arrayCreate[list;3]$get[list]` | Always empty; use `$env`. |
+| `deprecated` | `$createGuild[...]` | Deprecated by its package. |
+| `unreadable-string` | an unterminated `code` string | Not checked. |
+| `unknown-rule` | a misspelt rule in a directive | The directive has no effect. |
 
-**Info**: hints.
+### Info
 
-| Rule | Example | |
+| Rule | Example | Suggestion |
 |---|---|---|
-| `hidden-output` | `$let[ok;$pauseTrack]`, never read | `$!pauseTrack` hides the output without a variable. |
-| `escaped-letter` | `$description[a\nb]` | Inside an argument `\n` is just `n`. |
-| `function-case` | `$AUTHORID` | Works; the declared spelling is `$authorID`. |
+| `hidden-output` | `$let[ok;$pauseTrack]`, never read | Use `$!pauseTrack`. |
+| `escaped-letter` | `\n` inside an argument | It is the letter `n`. |
+| `function-case` | `$AUTHORID` | Use `$authorID`. |
 
-## Fixing
+Run `npx reforgiparse --rules` for descriptions.
 
-```bash
-npx reforgiparse --fix            # fixes what cannot change the bot, then checks
-npx reforgiparse --fix-brackets   # also escapes brackets that close a function too early
-```
+## Fixes
 
-**`--fix` only makes edits that cannot change what the bot does.** Today that is the letter case of function names (`$AUTHORID` becomes `$authorID`). Each edit is checked by parsing the code before and after, with the same result as ForgeScript's compiler, and kept only if both give the same functions, arguments and errors. A name written with an escape in the file is left alone and reported.
+| Option | Changes | Behaviour |
+|---|---|---|
+| `--fix` | Function names to their declared case. | Unchanged. Each edit is verified by re-parsing. |
+| `--fix-brackets` | Escapes `[` and `]` in text that would close a function early. | Changed: the text is printed as written. |
+| `--reindent` | Indentation of lines starting with a function, `;` or `]`. | May change output: ForgeScript sends whitespace inside arguments. |
 
-**`--fix-brackets` changes what the bot sends, on purpose.** In `$description[[Docs](https://x.y)]` the first `]` closes `$description` and `(https://x.y)]` is printed after it. The fix escapes the `[` and that `]`, giving `$description[\[Docs\](https://x.y)]` (written `\\[` and `\\]` in a JavaScript string), so ForgeScript prints `[Docs](https://x.y)`. It is only made when it removes the problem and adds no compile error; otherwise it is reported and left alone.
+`--reindent` never modifies lines inside conditions, lines in an argument that also contains text, or code that does not compile. The indent size is set by the `indent` option or detected from the code.
 
-**ReForgiParse does not re-indent code.** In ForgeScript, whitespace inside an argument or in the text around functions is part of what the bot sends. This prints four spaces before the name:
+## Configuration
 
-```
-$if[1==1;
-    $username
-]
-```
-
-ForgeScript only trims the two ends of a message, so changing indentation can change a bot's messages. ReForgiParse leaves it as written.
-
-## Config
-
-`reforgiparse.config.json` in the bot's folder, or a `"reforgiparse"` key in its `package.json`. It is JSON, so checking a bot never runs code from its config. Every option is optional; a list option also takes a single string.
+ReForgiParse reads `reforgiparse.config.json` from the bot's root folder, or a `"reforgiparse"` key in `package.json`.
 
 ```json
 {
@@ -165,50 +162,95 @@ ForgeScript only trims the two ends of a message, so changing indentation can ch
 }
 ```
 
-| Option | |
-|---|---|
-| `rules` | `"error"`, `"warning"`, `"info"` or `"off"` for any rule (`npx reforgiparse --rules` lists them). |
-| `include` | Files and folders to check, from the bot's folder. Default: all of it. |
-| `exclude` | File or folder names to skip anywhere (`"tests"`), or paths from the bot's folder (`"src/legacy"`). |
-| `properties` | Properties whose strings are ForgeScript code. Default: `["code"]`. |
-| `known` | Functions made when the bot runs, which no file defines: never reported as unknown. |
+| Option | Type | Description |
+|---|---|---|
+| `rules` | object | Severity per rule: `"error"`, `"warning"`, `"info"` or `"off"`. |
+| `include` | string[] | Files and folders to check. Default: the whole bot. |
+| `exclude` | string[] | File or folder names, or paths, to skip. |
+| `properties` | string[] | Properties containing code. Default: `["code"]`. |
+| `known` | string[] | Functions created at runtime, never reported as unknown. |
+| `indent` | number \| `"tab"` | Indent size for `--reindent`. |
 
-A config that cannot be used is an error, never a silent default: an unknown option, a misspelt rule (with the closest name), or a wrong level stops the check with exit code 2.
+Invalid configuration is reported as an error.
 
-## Turning rules off in code
+## Inline directives
 
-In ForgeScript, with `$c[...]`, which prints nothing:
+Disable rules with `$c[...]` inside code:
 
 ```
 $c[reforgiparse-disable-next-line unknown-function]
-$madeAtRuntime
+$runtimeFunction
 
 $pingms $c[reforgiparse-disable-line glued-name]
 
 $c[reforgiparse-disable]
-... every rule off until ...
+...
 $c[reforgiparse-enable]
 ```
 
-or as a JavaScript comment in the file, for the line after it or the line it is on:
+or with JavaScript comments:
 
 ```js
 // reforgiparse-disable-next-line invalid-argument
 module.exports = { name: "x", type: "messageCreate", code: "$round[abc]" }
 ```
 
-Without rule names, a directive covers every rule; separate several with spaces or commas. A misspelt rule name is reported (`unknown-rule`), since it would turn nothing off. `forgelint-` directives are honoured too, so a bot moving from ForgeLint keeps the ones it has.
+A directive without rule names applies to all rules. Separate several rule names with spaces or commas.
 
-## In CI
+## Editor integration
+
+### Language server
+
+`reforgiparse --lsp` starts a Language Server Protocol server on standard input and output. It provides diagnostics as you type, quick fixes (letter case, brackets, disabling a rule for a line) and a fix-all action.
+
+**Neovim** (0.11+):
+
+```lua
+vim.lsp.config("reforgiparse", {
+    cmd = { "npx", "reforgiparse", "--lsp" },
+    filetypes = { "javascript", "typescript" },
+    root_markers = { "package.json" },
+})
+vim.lsp.enable("reforgiparse")
+```
+
+**Helix** (`languages.toml`):
+
+```toml
+[language-server.reforgiparse]
+command = "npx"
+args = ["reforgiparse", "--lsp"]
+
+[[language]]
+name = "javascript"
+language-servers = ["typescript-language-server", "reforgiparse"]
+```
+
+ReForgiParse complements [ForgeVSC](https://github.com/tryforge/ForgeVSC), which provides completion, hover and highlighting in VS Code.
+
+### Embedding
+
+`reforgiparse/core` runs the checks on a single file's text, without file system access or ForgeScript, for editor extensions and browsers:
+
+```js
+const { checkScript, FunctionTable } = require("reforgiparse/core")
+
+const table = FunctionTable.fromMetadata(functions) // metadata/functions.json format
+const diagnostics = checkScript(text, table, { events, rules })
+```
+
+Argument values are validated when a `ValueChecker` is passed as `values`.
+
+## Continuous integration
 
 ```yaml
 - run: npm ci
 - run: npx reforgiparse --format github
 ```
 
-Problems appear as annotations on the pull request's lines, and errors fail the job.
+Findings appear as annotations on pull requests; errors fail the job.
 
-## Using the parser
+## API
 
 ```js
 const { FunctionManager } = require("@tryforge/forgescript")
@@ -217,54 +259,43 @@ const { FunctionTable, parse, checkCode, Project } = require("reforgiparse")
 FunctionManager.loadNative()
 const table = FunctionTable.fromForgeScript()
 
-parse("$if[$get[a]==1;yes;no]", table).functions[0].fields[0]   // { kind: "condition", op: "==", lhs, rhs, ... }
-parse("$get[a", table)                                         // throws CompileError, line 1, column 6, as ForgeScript does
-parse("$sendMessage $get[a", table, { recover: true }).errors  // every error, and a tree anyway
+parse("$if[$get[a]==1;yes;no]", table)                 // parse tree
+parse("$get[a", table)                                 // throws CompileError at line 1, column 6
+parse("$sendMessage $get[a", table, { recover: true }) // all errors, and a tree
 
-checkCode("$round[abc]", table)                                // the rules on one string
-Project.load("./mybot").check()                                // the rules on a whole bot, with file, line and column
+checkCode("$round[abc]", table)                        // findings for a code string
+Project.load("./bot").check()                          // findings for a whole bot
 ```
 
-| | |
+| Export | Description |
 |---|---|
-| `parse(code, table, { recover })` | `{ source, code, functions, errors }`. `code` is the top level as ForgeScript's template, with `[SYSTEM_FUNCTION(n)]` placeholders. Strict by default (throws the first error, like ForgeScript); `recover` reports all and keeps going. |
-| `Call` | `name` (as registered), `written`, `index` (ForgeScript's number), `negated` (`$!`), `silent` (`$#`), `count` (`$@[...]`), `fields`, and the offsets `start`, `nameStart`, `nameEnd`, `open`, `close`, `separators`, `end`. |
-| `Field` / `ConditionField` | `value` (with placeholders), `raw` (as written), `functions`, `start`, `end`; conditions have `op`, `lhs`, `rhs`, `opStart`. |
-| `CompileError` | ForgeScript's `message`, `line`, `column`, plus `kind`, `start`, `end` (the text it is about) and `fn`. |
-| `checkCode(code, table, { values })` | `{ rule, severity, message, start, end }[]`. Pass a `ValueChecker` to check argument values. |
-| `Project.load(folder).check()` | `{ file, line, column, endLine, endColumn, severity, rule, message }[]`. |
-| `extractCode(text)` | The `code:` strings of a JavaScript or TypeScript file, as ForgeScript receives them, with each character's offset in the file. |
-| `fixText(text, table, { brackets })` | `{ text, fixes, skipped }`: the file with the fixes made, what was fixed, and what was left alone and why. |
-| `loadConfig(folder)`, `directivesIn(text)`, `isSuppressed(...)` | The config and the directives, for tools of your own. |
-| `FunctionTable` | `fromForgeScript()`, `fromMetadata(...lists)`, or `new FunctionTable(raw)`. |
-| `nameIssues`, `render`, `walk`, `usage`, `suggest` | Helpers. |
+| `parse(code, table, { recover })` | Parses code as ForgeScript's compiler does. Returns `{ source, code, functions, errors }`. |
+| `checkCode(code, table, options)` | Findings for one code string. |
+| `checkScript(text, table, options)` | Findings for one source file's text. |
+| `Project.load(folder).check()` | Findings for a whole bot, with file positions. |
+| `fixText(text, table, options)` | Applies fixes to a source file's text. |
+| `extractCode(text)` | Code strings in a source file, with their positions. |
+| `FunctionTable` | Function list: `fromForgeScript()`, `fromMetadata(...)`. |
+| `loadConfig`, `directivesIn`, `nameIssues`, `render`, `walk`, `usage`, `suggest` | Utilities. |
 
-Offsets are UTF-16 indexes, like JavaScript string indexes.
+Positions are UTF-16 offsets, as in JavaScript strings.
 
-## How it is tested
+## Migrating from ForgeLint
 
-`npm test` (51 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
+- `forgelint-` directives are recognised, so existing directives keep working.
+- Rules shared with ForgeLint use the same names.
+- Configuration is JSON (`reforgiparse.config.json`) instead of JavaScript.
+- `--reindent` is opt-in and skips lines where indentation would change output.
 
-**ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ReForgiParse. `npm run parity` runs that diff; `REFORGIPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+## Testing
 
-What `npm test` checks:
+Parsing is verified against ForgeScript's compiler on hand-written cases and 20,000 generated inputs. Rule behaviour is verified against ForgeScript's interpreter wherever it can run without Discord. The suite runs on Node.js 22 and 24 with ForgeScript 2.8.0 and 2.5.0. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- **Parity with ForgeScript's compiler**, the one installed, given the same functions: a hand-written set and 20,000 seeded random inputs, half of them well-formed nested calls and half every kind of broken code. Tree, template and errors must be identical. Each check was shown to fail when the parser is broken on purpose.
-- **Positions**: every offset points at the character it names. **Recovery**: without errors the tree is strict mode's; with errors the first is ForgeScript's.
-- **Reading files**: 15,000 random string and template literals read by ReForgiParse and evaluated by Node must be equal.
-- **Every rule**, on code that has the problem and code that does not, with ForgeScript's resolvers deciding.
-- **Every rule's claim, on ForgeScript's interpreter**: each rule's example is run offline on ForgeScript's real interpreter, and ForgeScript must do what the message says. Where a message quotes ForgeScript's error, ForgeScript must log exactly that text.
-- **A whole bot**: an exact list of findings at their lines and columns; the command line's text, JSON and GitHub output and exit codes; an extension without metadata.
-- **Config, directives and fixes**, on real bots in temporary folders: levels, `off`, `known`, `exclude`, the `package.json` key, and an error for each kind of config mistake; every directive, ForgeLint's included. `--fix` must leave what ForgeScript's own compiler makes of the code unchanged; after `--fix-brackets`, ForgeScript's interpreter must print the text as written.
+```bash
+npm test
+npm run parity
+```
 
-Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx reforgiparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings.
+## License
 
-## Compared with ForgeLint
-
-[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript. Both have a config, comments that turn rules off (ReForgiParse reads ForgeLint's too), a letter-case fix and a bracket fix. ForgeLint also re-indents code and has a stray-bracket rule; ReForgiParse leaves indentation alone on purpose (see [Fixing](#fixing)), and its config is JSON rather than JavaScript. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ReForgiParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ReForgiParse knows it, and that its brackets get printed.
-
-ReForgiParse is written from scratch and shares no code with ForgeLint.
-
-## Licence
-
-LGPL-3.0-or-later (`COPYING.LESSER`, with the GPL it extends in `COPYING`), like ForgeScript, whose compiler it reproduces. Not affiliated with BotForge.
+[LGPL-3.0-or-later](COPYING.LESSER)

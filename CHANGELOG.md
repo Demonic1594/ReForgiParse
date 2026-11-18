@@ -1,38 +1,104 @@
 # Changelog
 
-## 0.4.0
+All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
-- **Renamed to ReForgiParse**, after the repository: package `reforgiparse`, command `npx reforgiparse`, `REFORGIPARSE_CORPUS` for the parity corpus. (0.1.0 to 0.3.1 were called ForgeParse.)
-- **`--fix`**: function names in their declared letter case. Only edits that cannot change the bot: each is checked by parsing the code before and after and kept only if both give the same functions, arguments and errors. Names written with escapes in the file are left alone and reported. Whitespace is never touched, since ForgeScript sends it.
-- **`--fix-brackets`**: escapes a `[` in an argument's text and the `]` that closed the function too early, so ForgeScript prints the text as written. Made only when it removes the problem and adds no compile error.
-- **Config**: `reforgiparse.config.json`, or `"reforgiparse"` in package.json, with `rules`, `include`, `exclude`, `properties` and `known`. JSON, so no code from the config runs. Any mistake in it stops the check with exit code 2 and says what is wrong.
-- **Directives**: `$c[reforgiparse-disable-next-line ...]`, `-disable-line`, `-disable` / `-enable`, also as JavaScript comments; ForgeLint's `forgelint-` directives are read the same way. A misspelt rule in one is reported (`unknown-rule`).
-- Tests: config, directives and fixes on real bots in temporary folders; `--fix` checked against ForgeScript's compiler, `--fix-brackets` and `$c[...]` against its interpreter.
+## 0.5.0 - 2026-11-18
 
-## 0.3.1
+### Added
 
-- Every rule's claim is now checked by running its example on ForgeScript's real interpreter (`test/runtime.test.js`), on ForgeScript 2.8.0 and 2.5.0.
-- That corrected three messages: `too-few-arguments` and `invalid-argument` now quote ForgeScript's actual errors ("Function $addField is missing argument value", "Given value abc for argument number is not of type Number"), and `color-value` says an unreadable colour leaves the embed with none (it was "an invalid colour").
-- The rules for contributors moved from `CLAUDE.md` to `CONTRIBUTING.md`.
+- Language server, started with `reforgiparse --lsp`, for editors that support the Language Server Protocol. It reports the same findings as the command line while you edit, applies the configuration and inline directives, and provides:
+  - quick fixes for function name case and for unescaped brackets (the latter labelled as changing the bot's output);
+  - a quick fix that disables a rule for one line, written as `$c[...]` inside code or as a JavaScript comment elsewhere, and offered only when it leaves the compiled code unchanged;
+  - a fix-all action for function name case.
 
-## 0.3.0
+  Functions, configuration and custom functions are reloaded when a file is saved. Configuration errors are shown in the editor.
+- `reforgiparse/core` entry point, exporting `checkScript(text, table, options)`. It checks one file's text without file system access or ForgeScript, for use in editor extensions and browsers.
 
-- **Argument values** are checked by the installed ForgeScript's own resolvers: `invalid-argument` (numbers, booleans, durations, enum values with a letter-case hint, permissions, IDs), and two values ForgeScript accepts but misreads: `color-value` (`$color[blue]` is `#00000b`, `$color[123456]` is decimal) and `http-url` (an `http://` link becomes a broken emoji URL).
-- **Variables:** `unused-variable`, `unset-variable`, `wrong-store` (`$get` of an array that only `$env` reads, or the reverse), and the hint `hidden-output` (`$let[ok;$fn]` never read: `$!fn` does that). Which functions set or read which store is read from each function's source; the rules stand down when code calls something whose use cannot be seen, and on code that does not compile.
-- **Conditions and brackets:** `condition-operator` (a second operator, `&&`/`||`, or no operator), `unescaped-bracket`, `misplaced-operator` (`$#!ping`), `escaped-letter` (`\n` in an argument).
-- `deprecated`, and the hint `function-case`. Severities are now error, warning and info.
-- Command line: `--format github` (annotations in GitHub Actions), `--no-info`, `--rules`, colours on a terminal, problems grouped by file.
-- Clearer messages: an argument problem says what the argument must be.
-- Tests: every rule both ways; the fuzzer now makes well-formed nested code half of the time; CI also runs everything on ForgeScript 2.5.0, whose compiler does not record raw field text (only that is not compared there).
-- API: `ValueChecker`, `Rules`, `distance`; `IParam` gains `type` and `enum`; `IRawFunction` gains `package` and `stores`.
+### Changed
 
-## 0.2.0
+- The command line and the language server both run their checks through `checkScript`, so their findings are identical.
 
-- `npx forgeparse`: checks a whole bot. Reads the `code:` strings in its JavaScript and TypeScript files exactly as JavaScript does, knows the installed ForgeScript, every installed extension (from its metadata, or from its `NativeFunction` files when it has none) and the bot's custom functions, and reports problems at their line and column, as text or JSON, with exit code 1 on errors.
-- Rules: `missing-brackets`, `too-many-arguments`, `unclosed-bracket`, `too-few-arguments`, `unknown-event`, `unexpected-brackets`, `unknown-function` (with the closest name), `glued-name`, `unreadable-string`. Errors show the function's usage.
-- API: `Project`, `checkCode`, `extractCode`, `readNatives`, `usage`, `suggest`. `CompileError` gains `start`, `end` (the part of the code it is about) and `fn`; `IRawFunction` gains `params`, `unwrap` and `deprecated`.
-- `nameIssues` no longer reports `$` followed by a digit (`$5`).
+## 0.4.1 - 2026-11-18
 
-## 0.1.0
+### Added
 
-- The parser: the same tree and compile errors as ForgeScript's compiler, with source positions and error recovery. `FunctionTable`, `parse`, `render`, `walk`, `nameIssues`.
+- `--reindent` option, which indents lines starting with a function, `;` or `]` by nesting depth. ForgeScript sends whitespace inside arguments and compares it inside conditions, so the following are left unchanged:
+  - lines that start with text, and blank lines;
+  - every line of an argument that also contains text;
+  - every line inside a condition.
+
+  A re-indented code string is kept only if it compiles to the same result apart from indentation.
+- `indent` configuration option: the number of spaces per level (1 to 8) or `"tab"`. When it is not set, the indentation is detected from the code.
+
+## 0.4.0 - 2026-11-18
+
+### Added
+
+- `--fix` option, which rewrites function names in their declared letter case. An edit is kept only if the code parses to the same functions, arguments and errors before and after it. Names written with JavaScript escapes are reported but not changed, and whitespace is never modified.
+- `--fix-brackets` option, which escapes a `[` in argument text and the `]` that would close the function early, so ForgeScript prints the text as written. It is applied only when it resolves the finding without introducing a compile error. This fix changes the bot's output.
+- Configuration through `reforgiparse.config.json` or a `"reforgiparse"` key in `package.json`, with the options `rules`, `include`, `exclude`, `properties` and `known`. Configuration is plain JSON and is never executed. Invalid configuration stops the check with exit code 2 and a description of the problem.
+- Inline directives `reforgiparse-disable-next-line`, `reforgiparse-disable-line`, `reforgiparse-disable` and `reforgiparse-enable`, in `$c[...]` or in JavaScript comments. ForgeLint's `forgelint-` directives are recognised as well.
+- `unknown-rule` warning for directives that name a rule that does not exist.
+
+### Changed
+
+- Renamed from ForgeParse to ReForgiParse. The package is now `reforgiparse`, the command is `npx reforgiparse`, and the parity corpus variable is `REFORGIPARSE_CORPUS`. Versions 0.1.0 to 0.3.1 were released as ForgeParse.
+
+## 0.3.1 - 2026-11-18
+
+### Added
+
+- Contribution guidelines in `CONTRIBUTING.md`.
+
+### Changed
+
+- `too-few-arguments` and `invalid-argument` messages quote the error ForgeScript reports, for example `Function $addField is missing argument value` and `Given value abc for argument number is not of type Number`.
+
+### Fixed
+
+- `color-value` described an unreadable colour as invalid. It now states that the embed receives no colour, which is what ForgeScript does.
+
+## 0.3.0 - 2026-11-18
+
+### Added
+
+- Argument validation with the resolvers of the ForgeScript version installed in the bot:
+  - `invalid-argument`: numbers, booleans, durations, enum values (with a hint when only the letter case differs), permissions and IDs;
+  - `color-value`: colours that ForgeScript accepts but reads differently than intended, such as `$color[blue]` (read as `#00000b`) and `$color[123456]` (read as a decimal number);
+  - `http-url`: `http://` URLs, which ForgeScript converts into an invalid URL.
+- Variable rules: `unused-variable`, `unset-variable`, and `wrong-store` for a value read from a different store than the one it was written to (for example `$get` on an array created with `$arrayCreate`, which only `$env` reads). Which store each function uses is read from its source. These rules are skipped for code that calls a function whose store usage cannot be determined, and for code that does not compile.
+- `hidden-output`: a `$let` whose variable is never read, used only to hide a function's output. `$!` does this directly.
+- `condition-operator`: conditions with more than one operator, with `&&` or `||`, or with no operator.
+- `unescaped-bracket`, `misplaced-operator` (such as `$#!ping`) and `escaped-letter` (such as `\n` inside an argument).
+- `deprecated` and `function-case`.
+- `info` severity, alongside `error` and `warning`.
+- Command-line options `--format github` (GitHub Actions annotations), `--no-info` and `--rules`.
+- API: `ValueChecker`, `Rules` and `distance`. `IParam` gains `type` and `enum`; `IRawFunction` gains `package` and `stores`.
+
+### Changed
+
+- Terminal output is coloured and grouped by file.
+- Argument findings state what the argument must be.
+
+## 0.2.0 - 2026-11-18
+
+### Added
+
+- Command line (`npx forgeparse`) that checks a whole bot. It:
+  - reads `code` strings from JavaScript and TypeScript files, decoding escapes and template literals as JavaScript does;
+  - loads the installed ForgeScript, every installed extension (from its metadata, or from its function files when it has none) and the bot's custom functions;
+  - reports findings by file, line and column, as text or JSON;
+  - exits with code 1 when errors are found.
+- Rules: `missing-brackets`, `too-many-arguments`, `unclosed-bracket`, `too-few-arguments`, `unknown-event`, `unexpected-brackets`, `unknown-function` (with the closest matching name), `glued-name` and `unreadable-string`. Error messages include the function's usage.
+- API: `Project`, `checkCode`, `extractCode`, `readNatives`, `usage` and `suggest`. `CompileError` gains `start`, `end` and `fn`; `IRawFunction` gains `params`, `unwrap` and `deprecated`.
+
+### Fixed
+
+- `nameIssues` reported `$` followed by a digit (such as `$5`), which ForgeScript treats as text.
+
+## 0.1.0 - 2026-11-18
+
+### Added
+
+- Parser that produces the same tree and compile errors as ForgeScript's compiler, with source positions and error recovery.
+- API: `FunctionTable`, `parse`, `render`, `walk` and `nameIssues`.
