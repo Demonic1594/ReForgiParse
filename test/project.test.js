@@ -35,7 +35,7 @@ test("a bot's problems are found once each, at the right place, and clean code h
     for (const d of got) assert.equal(d.severity, d.rule === "unknown-event" ? "error" : Rules[d.rule].severity)
     assert.match(got.find((d) => d.rule === "unknown-function").message, /Did you mean \$sendMessage\?/)
     assert.match(got.find((d) => d.rule === "unknown-event").message, /Did you mean "messageCreate"\?/)
-    assert.match(got.find((d) => d.rule === "too-few-arguments").message, /"value"\. Usage: \$addField\[name;value;inline\?;index\?\]/)
+    assert.match(got.find((d) => d.rule === "too-few-arguments").message, /"value", so ForgeScript stops the command: "Function \$addField is missing argument value"\. Usage: \$addField\[name;value;inline\?;index\?\]/)
     assert.deepEqual(project.checkFile("commands/clean.js"), [])
 })
 
