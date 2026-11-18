@@ -61,7 +61,7 @@ test("the command line: text, JSON, errors only, exit codes", () => {
 
     const gh = run("--format", "github")
     assert.equal(gh.status, 1)
-    assert.match(gh.stdout, /^::error file=commands\/problems\.js,line=6,col=1,endLine=6,endColumn=13,title=forgeparse missing-brackets::Function \$sendMessage requires brackets/m)
+    assert.match(gh.stdout, /^::error file=commands\/problems\.js,line=6,col=1,endLine=6,endColumn=13,title=reforgiparse missing-brackets::Function \$sendMessage requires brackets/m)
     assert.match(gh.stdout, /^::warning file=commands\/problems\.js,line=5,col=18,/m)
 
     assert.match(run("--rules").stdout, /^invalid-argument +error +/m)

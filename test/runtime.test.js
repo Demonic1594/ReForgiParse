@@ -133,7 +133,7 @@ test("function-case: the name runs as the declared function", () => {
     assert.equal(Compiler.compile("$AUTHORID").functions[0].data.name, "$authorID")
 })
 
-test("compile errors: ForgeScript refuses the code with the message ForgeParse gives", () => {
+test("compile errors: ForgeScript refuses the code with the message ReForgiParse gives", () => {
     for (const [code, rule] of [["$sendMessage", "missing-brackets"], ["$get[a;b]", "too-many-arguments"], ["$get[a", "unclosed-bracket"]]) {
         const f = finding(code, rule)
         const theirs = (() => {

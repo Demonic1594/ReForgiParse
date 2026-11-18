@@ -4,9 +4,9 @@ import * as path from "node:path"
 import { Diagnostic, Project } from "./project"
 import { Rules } from "./rules"
 
-const HELP = `forgeparse: checks a ForgeScript bot's code the way ForgeScript compiles and runs it.
+const HELP = `reforgiparse: checks a ForgeScript bot's code the way ForgeScript compiles and runs it.
 
-Usage: forgeparse [folder | files...] [options]
+Usage: reforgiparse [folder | files...] [options]
 
   --format <name>     text (default), json, or github (annotations in GitHub Actions)
   --json              same as --format json
@@ -57,7 +57,7 @@ function parseArgs(argv: string[]): Args | number {
             const v = argv[++i]
             if (!v) return console.error("--property needs a name"), 2
             out.properties.push(v)
-        } else if (a.startsWith("-")) return console.error(`Unknown option ${a}. See forgeparse --help.`), 2
+        } else if (a.startsWith("-")) return console.error(`Unknown option ${a}. See reforgiparse --help.`), 2
         else paths.push(a)
     }
     // One folder: the project. Files (or several paths): the project is the current folder.
@@ -80,7 +80,7 @@ function github(d: Diagnostic) {
     const level = d.severity === "error" ? "error" : d.severity === "warning" ? "warning" : "notice"
     const esc = (s: string) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A")
     const prop = (s: string) => esc(s).replace(/:/g, "%3A").replace(/,/g, "%2C")
-    return `::${level} file=${prop(d.file)},line=${d.line},col=${d.column},endLine=${d.endLine},endColumn=${d.endColumn},title=${prop(`forgeparse ${d.rule}`)}::${esc(d.message)}`
+    return `::${level} file=${prop(d.file)},line=${d.line},col=${d.column},endLine=${d.endLine},endColumn=${d.endColumn},title=${prop(`reforgiparse ${d.rule}`)}::${esc(d.message)}`
 }
 
 export function main(argv = process.argv.slice(2)): number {

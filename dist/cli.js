@@ -39,9 +39,9 @@ exports.main = main;
 const path = __importStar(require("node:path"));
 const project_1 = require("./project");
 const rules_1 = require("./rules");
-const HELP = `forgeparse: checks a ForgeScript bot's code the way ForgeScript compiles and runs it.
+const HELP = `reforgiparse: checks a ForgeScript bot's code the way ForgeScript compiles and runs it.
 
-Usage: forgeparse [folder | files...] [options]
+Usage: reforgiparse [folder | files...] [options]
 
   --format <name>     text (default), json, or github (annotations in GitHub Actions)
   --json              same as --format json
@@ -91,7 +91,7 @@ function parseArgs(argv) {
             out.properties.push(v);
         }
         else if (a.startsWith("-"))
-            return console.error(`Unknown option ${a}. See forgeparse --help.`), 2;
+            return console.error(`Unknown option ${a}. See reforgiparse --help.`), 2;
         else
             paths.push(a);
     }
@@ -115,7 +115,7 @@ function github(d) {
     const level = d.severity === "error" ? "error" : d.severity === "warning" ? "warning" : "notice";
     const esc = (s) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
     const prop = (s) => esc(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
-    return `::${level} file=${prop(d.file)},line=${d.line},col=${d.column},endLine=${d.endLine},endColumn=${d.endColumn},title=${prop(`forgeparse ${d.rule}`)}::${esc(d.message)}`;
+    return `::${level} file=${prop(d.file)},line=${d.line},col=${d.column},endLine=${d.endLine},endColumn=${d.endColumn},title=${prop(`reforgiparse ${d.rule}`)}::${esc(d.message)}`;
 }
 function main(argv = process.argv.slice(2)) {
     const args = parseArgs(argv);

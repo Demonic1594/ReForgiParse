@@ -1,7 +1,7 @@
 "use strict";
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// ForgeParse: ForgeScript's compiler as a parser.
+// ReForgiParse: ForgeScript's compiler as a parser.
 //
 // The algorithm reproduces ForgeScript's own compiler (github.com/tryforge/ForgeScript,
 // src/core/Compiler.ts, LGPL-3.0-or-later, Copyright (c) BotForge), so that for any input the

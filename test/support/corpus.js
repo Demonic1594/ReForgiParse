@@ -1,6 +1,6 @@
 "use strict"
 // Code to compare against ForgeScript's compiler: a hand-written set that covers the grammar, plus,
-// when FORGEPARSE_CORPUS names a folder, every ```fs / ```forgescript block and every `code:`
+// when REFORGIPARSE_CORPUS names a folder, every ```fs / ```forgescript block and every `code:`
 // string in the .md, .js and .fsx files under it (for example a bot, or a knowledge base).
 const fs = require("node:fs")
 const path = require("node:path")
@@ -103,7 +103,7 @@ function* files(dir) {
 
 function corpus() {
     const out = [...BUILT_IN]
-    const dir = process.env.FORGEPARSE_CORPUS
+    const dir = process.env.REFORGIPARSE_CORPUS
     if (dir) {
         for (const f of files(dir)) {
             const text = fs.readFileSync(f, "utf8")

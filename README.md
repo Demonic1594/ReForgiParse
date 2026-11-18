@@ -1,12 +1,12 @@
-# ForgeParse
+# ReForgiParse
 
 **Find the mistakes in a ForgeScript bot before it runs, the way ForgeScript itself would see them.**
 
-ForgeParse reads a bot's commands with a parser that gives exactly what ForgeScript's own compiler gives, then checks them with rules that each state what ForgeScript does with the code: refuses to compile it, stops the command, or quietly does something else than what was written.
+ReForgiParse reads a bot's commands with a parser that gives exactly what ForgeScript's own compiler gives, then checks them with rules that each state what ForgeScript does with the code: refuses to compile it, stops the command, or quietly does something else than what was written.
 
 ```bash
 npm i -D github:Demonic1594/ReForgiParse
-npx forgeparse
+npx reforgiparse
 ```
 
 For this command:
@@ -38,7 +38,7 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 
 ## Contents
 
-1. [Why ForgeParse](#why-forgeparse)
+1. [Why ReForgiParse](#why-reforgiparse)
 2. [Checking a bot](#checking-a-bot)
 3. [Rules](#rules)
 4. [In CI](#in-ci)
@@ -47,7 +47,7 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 7. [Compared with ForgeLint](#compared-with-forgelint)
 8. [Licence](#licence)
 
-## Why ForgeParse
+## Why ReForgiParse
 
 - **It agrees with ForgeScript, by construction.** The parser follows ForgeScript's compiler step by step: the same tree, the same errors at the same line and column, quirks included (`$pingms` runs `$ping` and prints `ms`). Every test run compares it with the real compiler on thousands of inputs.
 - **ForgeScript decides what a valid argument is.** Numbers, booleans, durations, colours, links, permissions and enum values are checked by calling the resolvers of the ForgeScript your bot has installed, so a check never disagrees with the version you run. That is how it knows that `$color[blue]` is a near-black `#00000b` and that an `http://` link becomes a broken emoji URL.
@@ -61,10 +61,10 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 Run it in the bot's folder (Node.js 18.17 or newer; the bot's packages installed):
 
 ```bash
-npx forgeparse                       # the whole bot
-npx forgeparse commands/daily.js     # some files: custom functions are still read from the whole bot
-npx forgeparse --json                # for other tools
-npx forgeparse --rules               # what each rule checks
+npx reforgiparse                       # the whole bot
+npx reforgiparse commands/daily.js     # some files: custom functions are still read from the whole bot
+npx reforgiparse --json                # for other tools
+npx reforgiparse --rules               # what each rule checks
 ```
 
 | Option | |
@@ -129,7 +129,7 @@ Each rule is backed by ForgeScript's source (2.8.0) or by running its own resolv
 
 ```yaml
 - run: npm ci
-- run: npx forgeparse --format github
+- run: npx reforgiparse --format github
 ```
 
 Problems appear as annotations on the pull request's lines, and errors fail the job.
@@ -138,7 +138,7 @@ Problems appear as annotations on the pull request's lines, and errors fail the 
 
 ```js
 const { FunctionManager } = require("@tryforge/forgescript")
-const { FunctionTable, parse, checkCode, Project } = require("forgeparse")
+const { FunctionTable, parse, checkCode, Project } = require("reforgiparse")
 
 FunctionManager.loadNative()
 const table = FunctionTable.fromForgeScript()
@@ -169,24 +169,24 @@ Offsets are UTF-16 indexes, like JavaScript string indexes.
 
 `npm test` (44 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
 
-**ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ForgeParse. `npm run parity` runs that diff; `FORGEPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+**ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ReForgiParse. `npm run parity` runs that diff; `REFORGIPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 What `npm test` checks:
 
 - **Parity with ForgeScript's compiler**, the one installed, given the same functions: a hand-written set and 20,000 seeded random inputs, half of them well-formed nested calls and half every kind of broken code. Tree, template and errors must be identical. Each check was shown to fail when the parser is broken on purpose.
 - **Positions**: every offset points at the character it names. **Recovery**: without errors the tree is strict mode's; with errors the first is ForgeScript's.
-- **Reading files**: 15,000 random string and template literals read by ForgeParse and evaluated by Node must be equal.
+- **Reading files**: 15,000 random string and template literals read by ReForgiParse and evaluated by Node must be equal.
 - **Every rule**, on code that has the problem and code that does not, with ForgeScript's resolvers deciding.
 - **Every rule's claim, on ForgeScript's interpreter**: each rule's example is run offline on ForgeScript's real interpreter, and ForgeScript must do what the message says. Where a message quotes ForgeScript's error, ForgeScript must log exactly that text.
 - **A whole bot**: an exact list of findings at their lines and columns; the command line's text, JSON and GitHub output and exit codes; an extension without metadata.
 
-Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx forgeparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings.
+Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx reforgiparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings.
 
 ## Compared with ForgeLint
 
-[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript, and does things ForgeParse does not yet: a formatter with `--fix`, a config file, comments that turn rules off, and a stray-bracket rule. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ForgeParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ForgeParse knows it, and that its brackets get printed.
+[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript, and does things ReForgiParse does not yet: a formatter with `--fix`, a config file, comments that turn rules off, and a stray-bracket rule. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ReForgiParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ReForgiParse knows it, and that its brackets get printed.
 
-ForgeParse is written from scratch and shares no code with ForgeLint.
+ReForgiParse is written from scratch and shares no code with ForgeLint.
 
 ## Licence
 
