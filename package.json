@@ -10,7 +10,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "tsc && node --test test/*.test.js"
+    "test": "tsc && node --test test/*.test.js",
+    "parity": "tsc && node --test test/parity.test.js test/positions.test.js"
   },
   "repository": {
     "type": "git",

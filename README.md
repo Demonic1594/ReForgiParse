@@ -167,7 +167,11 @@ Offsets are UTF-16 indexes, like JavaScript string indexes.
 
 ## How it is tested
 
-`npm test` (33 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows:
+`npm test` (33 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
+
+**ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ForgeParse. `npm run parity` runs that diff; `FORGEPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CLAUDE.md`](CLAUDE.md).
+
+What `npm test` checks:
 
 - **Parity with ForgeScript's compiler**, the one installed, given the same functions: a hand-written set and 20,000 seeded random inputs, half of them well-formed nested calls and half every kind of broken code. Tree, template and errors must be identical. Each check was shown to fail when the parser is broken on purpose.
 - **Positions**: every offset points at the character it names. **Recovery**: without errors the tree is strict mode's; with errors the first is ForgeScript's.
