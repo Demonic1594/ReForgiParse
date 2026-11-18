@@ -1,4 +1,5 @@
 import { Severity } from "./rules";
+import { ValueChecker } from "./values";
 import { FunctionTable, IRawFunction } from "./table";
 /** One problem, at a place in a file. */
 export interface Diagnostic {
@@ -49,6 +50,8 @@ export declare class Project {
     readonly customFunctions: CustomFunction[];
     /** What could not be read; shown, never fatal. */
     readonly notes: string[];
+    /** Checks literal argument values with the bot's ForgeScript. */
+    readonly values: ValueChecker;
     /** Event names a command's `type` can be, `null` when ForgeScript's could not be read. */
     readonly events: Set<string> | null;
     private constructor();
@@ -64,7 +67,7 @@ export declare class Project {
  * The functions and event names an extension defines in code: its `NativeFunction` files and event
  * handlers, loaded without starting the extension. Only files that mention them are loaded.
  */
-export declare function readNatives(dir: string): {
+export declare function readNatives(dir: string, argType?: Record<number, string>): {
     functions: IRawFunction[];
     events: string[];
     failures: string[];

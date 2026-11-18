@@ -17,6 +17,10 @@ export interface IParam {
     name: string
     required?: boolean
     rest?: boolean
+    /** The ArgType name: `String`, `Number`, `Boolean`, `Time`, `Enum`, `User`, ... */
+    type?: string
+    /** For an `Enum`: its value names. */
+    enum?: readonly string[]
 }
 
 /** A function as ForgeScript's compiler sees it (the shape of `FunctionManager.raw`), with its documented arguments when known. */
@@ -35,6 +39,10 @@ export interface IRawFunction {
     /** ForgeScript resolves the arguments before running the function (and so rejects missing ones). */
     unwrap?: boolean
     deprecated?: boolean
+    /** Where it comes from: `@tryforge/forgescript`, an extension's package name, or `custom`. */
+    package?: string
+    /** What it does with the two variable stores, read from its source when known. */
+    stores?: { setsVariable?: boolean; readsVariable?: boolean; setsEnvironment?: boolean }
 }
 
 /** Escapes a name the way ForgeScript does before joining names into one regular expression. */
@@ -108,7 +116,7 @@ export interface IFunctionMetadata {
     name: string
     aliases?: readonly string[] | null
     brackets?: boolean | null
-    args?: ReadonlyArray<{ name?: string; condition?: boolean; rest?: boolean; required?: boolean }> | null
+    args?: ReadonlyArray<{ name?: string; condition?: boolean; rest?: boolean; required?: boolean; type?: string; enum?: readonly string[] }> | null
     unwrap?: boolean
     deprecated?: boolean
 }
@@ -122,21 +130,64 @@ export function fromMetadata(m: IFunctionMetadata): IRawFunction {
             m.brackets === undefined || m.brackets === null
                 ? null
                 : { required: m.brackets, fields: (m.args ?? []).map((a) => ({ condition: !!a.condition, rest: !!a.rest })) },
-        params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest })),
+        params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest, type: a.type, enum: Array.isArray(a.enum) ? a.enum : undefined })),
         unwrap: !!m.unwrap,
         deprecated: !!m.deprecated,
     }
 }
 
+/** An argument as a NativeFunction defines it: `type` is an ArgType number, `enum` the enum object. */
+export interface INativeArg {
+    name: string
+    required?: boolean
+    rest?: boolean
+    condition?: boolean
+    type?: number | string
+    enum?: Record<string, string | number>
+}
+
 interface ForgeScriptLike {
-    FunctionManager: { raw: IRawFunction[]; get?(name: string): { data: { args?: IParam[]; unwrap?: boolean; deprecated?: boolean } } | undefined }
+    FunctionManager: { raw: IRawFunction[]; get?(name: string): { path?: string; data: { args?: INativeArg[]; unwrap?: boolean; deprecated?: boolean } } | undefined }
+    ArgType?: Record<number, string>
+}
+
+/** What a function's compiled source does with `$let` variables and the environment store. */
+export function storesOf(file: string | undefined): IRawFunction["stores"] {
+    if (!file) return undefined
+    let text: string
+    try {
+        text = require("node:fs").readFileSync(file, "utf8")
+    } catch {
+        return undefined
+    }
+    return {
+        setsVariable: /\.setKeyword\(/.test(text),
+        readsVariable: /\.(getKeyword|hasKeyword|deleteKeyword)\(/.test(text),
+        setsEnvironment: /\.setEnvironmentKey\(/.test(text),
+    }
+}
+
+/** A NativeFunction's argument, described by name. */
+export function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam {
+    const type = typeof a.type === "number" ? argType?.[a.type] : a.type
+    const values = a.enum && typeof a.enum === "object" ? Object.keys(a.enum).filter((k) => Number.isNaN(Number(k))) : undefined
+    return { name: a.name, required: !!a.required, rest: !!a.rest, type, enum: values }
 }
 
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */
 export function withParams(forgescript: ForgeScriptLike): IRawFunction[] {
     return forgescript.FunctionManager.raw.map((f) => {
-        const data = forgescript.FunctionManager.get?.(f.name)?.data
-        return data ? { ...f, params: (data.args ?? []).map((a) => ({ name: a.name, required: !!a.required, rest: !!a.rest })), unwrap: !!data.unwrap, deprecated: !!data.deprecated } : f
+        const native = forgescript.FunctionManager.get?.(f.name)
+        const data = native?.data
+        if (!data) return { ...f, package: "@tryforge/forgescript" }
+        return {
+            ...f,
+            params: (data.args ?? []).map((a) => paramFromNative(a, forgescript.ArgType)),
+            unwrap: !!data.unwrap,
+            deprecated: !!data.deprecated,
+            package: "@tryforge/forgescript",
+            stores: storesOf(native.path),
+        }
     })
 }
 

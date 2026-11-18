@@ -12,6 +12,8 @@ const { fuzz } = require("./support/fuzz")
 
 forgescript.FunctionManager.loadNative()
 const table = FunctionTable.fromForgeScript(forgescript)
+// ForgeScript 2.8.0 records a field's raw text (rawValue); 2.5.0 does not, and then only ForgeParse has it.
+const HAS_RAW = new forgescript.Compiler(undefined, "$get[a]").compile().functions[0].fields[0].rawValue !== undefined
 
 /** ForgeScript's result, in a plain shape. */
 function oracle(code) {
@@ -37,7 +39,7 @@ function ours(code) {
         return { error: e.message, line: e.line, column: e.column }
     }
 }
-const ourField = (f) => (f.kind === "condition" ? { op: f.op, lhs: ourField(f.lhs), rhs: f.rhs ? ourField(f.rhs) : null } : { value: f.value, raw: f.raw, functions: f.functions.map(ourCall) })
+const ourField = (f) => (f.kind === "condition" ? { op: f.op, lhs: ourField(f.lhs), rhs: f.rhs ? ourField(f.rhs) : null } : { value: f.value, raw: HAS_RAW ? f.raw : undefined, functions: f.functions.map(ourCall) })
 const ourCall = (c) => ({ name: c.name, index: c.index, negated: c.negated, silent: c.silent, count: c.count, fields: c.fields ? c.fields.map(ourField) : null })
 
 function check(codes, label) {
@@ -62,7 +64,7 @@ test("random code built from ForgeScript's syntax parses as ForgeScript compiles
     const codes = fuzz(table, n, Number(process.env.FUZZ_SEED || 1594))
     const errors = check(codes, "fuzz")
     console.log(`# fuzz: ${codes.length} inputs, ${errors} of them compile errors`)
-    assert.ok(errors > n / 10 && errors < n * 0.9, "the fuzzer reaches both valid code and every error")
+    assert.ok(errors > n * 0.2 && errors < n * 0.7, `the fuzzer reaches both valid code and errors (${errors} of ${n} are errors)`)
 })
 
 test("each compile error ForgeScript has is reached, with the same message and position", () => {

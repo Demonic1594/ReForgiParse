@@ -10,6 +10,10 @@ export interface IParam {
     name: string;
     required?: boolean;
     rest?: boolean;
+    /** The ArgType name: `String`, `Number`, `Boolean`, `Time`, `Enum`, `User`, ... */
+    type?: string;
+    /** For an `Enum`: its value names. */
+    enum?: readonly string[];
 }
 /** A function as ForgeScript's compiler sees it (the shape of `FunctionManager.raw`), with its documented arguments when known. */
 export interface IRawFunction {
@@ -27,6 +31,14 @@ export interface IRawFunction {
     /** ForgeScript resolves the arguments before running the function (and so rejects missing ones). */
     unwrap?: boolean;
     deprecated?: boolean;
+    /** Where it comes from: `@tryforge/forgescript`, an extension's package name, or `custom`. */
+    package?: string;
+    /** What it does with the two variable stores, read from its source when known. */
+    stores?: {
+        setsVariable?: boolean;
+        readsVariable?: boolean;
+        setsEnvironment?: boolean;
+    };
 }
 /**
  * The functions a bot has, in the order ForgeScript registers them. A later name or alias replaces
@@ -63,24 +75,41 @@ export interface IFunctionMetadata {
         condition?: boolean;
         rest?: boolean;
         required?: boolean;
+        type?: string;
+        enum?: readonly string[];
     }> | null;
     unwrap?: boolean;
     deprecated?: boolean;
 }
 /** One metadata entry as the compiler sees it. */
 export declare function fromMetadata(m: IFunctionMetadata): IRawFunction;
+/** An argument as a NativeFunction defines it: `type` is an ArgType number, `enum` the enum object. */
+export interface INativeArg {
+    name: string;
+    required?: boolean;
+    rest?: boolean;
+    condition?: boolean;
+    type?: number | string;
+    enum?: Record<string, string | number>;
+}
 interface ForgeScriptLike {
     FunctionManager: {
         raw: IRawFunction[];
         get?(name: string): {
+            path?: string;
             data: {
-                args?: IParam[];
+                args?: INativeArg[];
                 unwrap?: boolean;
                 deprecated?: boolean;
             };
         } | undefined;
     };
+    ArgType?: Record<number, string>;
 }
+/** What a function's compiled source does with `$let` variables and the environment store. */
+export declare function storesOf(file: string | undefined): IRawFunction["stores"];
+/** A NativeFunction's argument, described by name. */
+export declare function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam;
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */
 export declare function withParams(forgescript: ForgeScriptLike): IRawFunction[];
 /** How a function is written with its arguments: `$sendMessage[channel ID;content?;return message ID?]`. */

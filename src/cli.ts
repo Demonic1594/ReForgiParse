@@ -2,38 +2,56 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 import * as path from "node:path"
 import { Diagnostic, Project } from "./project"
+import { Rules } from "./rules"
 
-const HELP = `forgeparse: checks a ForgeScript bot's code as ForgeScript compiles it.
+const HELP = `forgeparse: checks a ForgeScript bot's code the way ForgeScript compiles and runs it.
 
-Usage: forgeparse [folder or files...] [options]
+Usage: forgeparse [folder | files...] [options]
 
-  --json              print the result as JSON
+  --format <name>     text (default), json, or github (annotations in GitHub Actions)
+  --json              same as --format json
   --property <name>   also read this property as code (repeatable; default: code)
   --no-warnings       report errors only
+  --no-info           leave out info (spelling hints)
   --quiet             print nothing when there is no problem
+  --rules             list the rules
   -h, --help          show this help
   -v, --version       show the version
 
 Exit code: 0 without errors, 1 with errors, 2 for bad usage.`
 
+type Format = "text" | "json" | "github"
+
 interface Args {
     root: string
     include: string[]
-    json: boolean
+    format: Format
     properties: string[]
     warnings: boolean
+    info: boolean
     quiet: boolean
 }
 
 function parseArgs(argv: string[]): Args | number {
     const paths: string[] = []
-    const out: Args = { root: ".", include: [], json: false, properties: [], warnings: true, quiet: false }
+    const out: Args = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false }
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]
         if (a === "-h" || a === "--help") return console.log(HELP), 0
         if (a === "-v" || a === "--version") return console.log(require("../package.json").version), 0
-        if (a === "--json") out.json = true
-        else if (a === "--no-warnings") out.warnings = false
+        if (a === "--rules") {
+            for (const [name, r] of Object.entries(Rules)) console.log(`${name.padEnd(20)} ${r.severity.padEnd(8)} ${r.description}`)
+            console.log(`${"unknown-event".padEnd(20)} ${"error".padEnd(8)} A command's type that no loaded package has as an event: the command never runs.`)
+            console.log(`${"unreadable-string".padEnd(20)} ${"warning".padEnd(8)} A code string JavaScript would not end where it seems to: not checked.`)
+            return 0
+        }
+        if (a === "--json") out.format = "json"
+        else if (a === "--format") {
+            const v = argv[++i]
+            if (v !== "text" && v !== "json" && v !== "github") return console.error("--format takes text, json or github"), 2
+            out.format = v
+        } else if (a === "--no-warnings") (out.warnings = false), (out.info = false)
+        else if (a === "--no-info") out.info = false
         else if (a === "--quiet") out.quiet = true
         else if (a === "--property") {
             const v = argv[++i]
@@ -49,27 +67,50 @@ function parseArgs(argv: string[]): Args | number {
     return out
 }
 
-function format(d: Diagnostic) {
-    return `${d.file}:${d.line}:${d.column}  ${d.severity.padEnd(7)}  ${d.message}  [${d.rule}]`
+const color = process.stdout.isTTY && !process.env.NO_COLOR
+const paint = (code: string, s: string) => (color ? `\x1b[${code}m${s}\x1b[0m` : s)
+const SEVERITY_COLOR = { error: "31", warning: "33", info: "36" } as const
+
+function text(d: Diagnostic) {
+    return `${paint("2", `${d.file}:${d.line}:${d.column}`)}  ${paint(SEVERITY_COLOR[d.severity], d.severity.padEnd(7))}  ${d.message}  ${paint("2", `[${d.rule}]`)}`
+}
+
+/** A GitHub Actions workflow command: shown on the pull request's changed lines. */
+function github(d: Diagnostic) {
+    const level = d.severity === "error" ? "error" : d.severity === "warning" ? "warning" : "notice"
+    const esc = (s: string) => s.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A")
+    const prop = (s: string) => esc(s).replace(/:/g, "%3A").replace(/,/g, "%2C")
+    return `::${level} file=${prop(d.file)},line=${d.line},col=${d.column},endLine=${d.endLine},endColumn=${d.endColumn},title=${prop(`forgeparse ${d.rule}`)}::${esc(d.message)}`
 }
 
 export function main(argv = process.argv.slice(2)): number {
     const args = parseArgs(argv)
     if (typeof args === "number") return args
     const project = Project.load(args.root, { include: args.include, properties: args.properties })
-    let diagnostics = project.check()
-    if (!args.warnings) diagnostics = diagnostics.filter((d) => d.severity === "error")
-    const errors = diagnostics.filter((d) => d.severity === "error").length
-    const warnings = diagnostics.length - errors
-    if (args.json) {
-        console.log(JSON.stringify({ root: project.root, files: project.files.length, functions: project.table.size, sources: project.sources, notes: project.notes, errors, warnings, diagnostics }, null, 2))
+    const diagnostics = project.check().filter((d) => d.severity === "error" || (d.severity === "warning" ? args.warnings : args.info))
+    const count = (s: Diagnostic["severity"]) => diagnostics.filter((d) => d.severity === s).length
+    const errors = count("error")
+
+    if (args.format === "json") {
+        console.log(JSON.stringify({ root: project.root, files: project.files.length, functions: project.table.size, sources: project.sources, notes: project.notes, errors, warnings: count("warning"), info: count("info"), diagnostics }, null, 2))
         return errors ? 1 : 0
     }
     for (const note of project.notes) console.error(`note: ${note}`)
-    for (const d of diagnostics) console.log(format(d))
+    if (args.format === "github") {
+        for (const d of diagnostics) console.log(github(d))
+        return errors ? 1 : 0
+    }
+    let file = ""
+    for (const d of diagnostics) {
+        if (d.file !== file && file) console.log("")
+        file = d.file
+        console.log(text(d))
+    }
     if (diagnostics.length || !args.quiet) {
         const from = project.sources.map((s) => `${s.name}${s.version ? ` ${s.version}` : ""}`).join(", ") || "none"
-        console.log(`\n${errors} error(s), ${warnings} warning(s) in ${project.files.length} file(s) under ${path.relative(process.cwd(), project.root) || "."} (functions: ${from})`)
+        const parts = [`${errors} error(s)`, `${count("warning")} warning(s)`, ...(count("info") ? [`${count("info")} info`] : [])]
+        const where = `${project.files.length} file(s) under ${path.relative(process.cwd(), project.root) || "."}`
+        console.log(`${diagnostics.length ? "\n" : ""}${paint(errors ? "31" : diagnostics.length ? "33" : "32", parts.join(", "))} in ${where} ${paint("2", `(functions: ${from})`)}`)
     }
     return errors ? 1 : 0
 }
