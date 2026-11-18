@@ -15,6 +15,7 @@ Usage: reforgiparse [folder | files...] [options]
   --json              same as --format json
   --fix               fix what cannot change the bot (names' letter case), then check
   --fix-brackets      also escape [ ] in text that close a function too early (changes what the bot sends)
+  --reindent          indent lines that start with a function, ; or ] by nesting (can change what the bot sends)
   --config <file>     the config to use (default: reforgiparse.config.json, or "reforgiparse" in package.json)
   --property <name>   also read this property as code (repeatable; default: code)
   --no-warnings       report errors only
@@ -38,12 +39,13 @@ interface Args {
     quiet: boolean
     fix: boolean
     fixBrackets: boolean
+    reindent: boolean
     config: string | undefined
 }
 
 function parseArgs(argv: string[]): Args | number {
     const paths: string[] = []
-    const out: Args = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false, fix: false, fixBrackets: false, config: undefined }
+    const out: Args = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false, fix: false, fixBrackets: false, reindent: false, config: undefined }
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i]
         if (a === "-h" || a === "--help") return console.log(HELP), 0
@@ -62,6 +64,7 @@ function parseArgs(argv: string[]): Args | number {
         else if (a === "--quiet") out.quiet = true
         else if (a === "--fix") out.fix = true
         else if (a === "--fix-brackets") (out.fix = true), (out.fixBrackets = true)
+        else if (a === "--reindent") out.reindent = true
         else if (a === "--config") {
             const v = argv[++i]
             if (!v) return console.error("--config needs a file"), 2
@@ -109,11 +112,11 @@ export function main(argv = process.argv.slice(2)): number {
         console.error(`config: ${e.message}`)
         return 2
     }
-    if (args.fix) {
+    if (args.fix || args.reindent) {
         let fixed = 0
         for (const file of project.files) {
             const before = fs.readFileSync(file, "utf8")
-            const r = fixText(before, project.table, { properties: project.properties, brackets: args.fixBrackets })
+            const r = fixText(before, project.table, { properties: project.properties, case: args.fix, brackets: args.fixBrackets, reindent: args.reindent, indent: project.config.indent })
             const rel = path.relative(project.root, file).split(path.sep).join("/")
             const where = (offset: number) => {
                 const head = before.slice(0, offset)

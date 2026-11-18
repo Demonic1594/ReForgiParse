@@ -34,7 +34,7 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 1 error(s), 2 warning(s) in 1 file(s) under . (functions: @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0)
 ```
 
-> **Status: 0.4.0.** Checks, fixes and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: editor support. The API may change before 1.0.
+> **Status: 0.4.1.** Checks, fixes and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: editor support. The API may change before 1.0.
 
 ## Contents
 
@@ -75,6 +75,7 @@ npx reforgiparse --rules               # what each rule checks
 | `--format text\|json\|github` | Output: text (default), JSON, or GitHub Actions annotations. `--json` is `--format json`. |
 | `--fix` | Fix what cannot change the bot, then check. See [Fixing](#fixing). |
 | `--fix-brackets` | Also escape brackets that close a function too early. This changes what the bot sends, on purpose. |
+| `--reindent` | Opt-in: indent lines that start with a function, `;` or `]` by nesting. See [Fixing](#fixing) for what it leaves alone. |
 | `--config <file>` | Use this config. Default: `reforgiparse.config.json`, or `"reforgiparse"` in `package.json`. |
 | `--no-warnings` | Errors only. |
 | `--no-info` | Leave out the spelling hints. |
@@ -137,13 +138,14 @@ Each rule is backed by ForgeScript's source (2.8.0) or by running its own resolv
 ```bash
 npx reforgiparse --fix            # fixes what cannot change the bot, then checks
 npx reforgiparse --fix-brackets   # also escapes brackets that close a function too early
+npx reforgiparse --reindent       # opt-in: indents code by nesting
 ```
 
 **`--fix` only makes edits that cannot change what the bot does.** Today that is the letter case of function names (`$AUTHORID` becomes `$authorID`). Each edit is checked by parsing the code before and after, with the same result as ForgeScript's compiler, and kept only if both give the same functions, arguments and errors. A name written with an escape in the file is left alone and reported.
 
 **`--fix-brackets` changes what the bot sends, on purpose.** In `$description[[Docs](https://x.y)]` the first `]` closes `$description` and `(https://x.y)]` is printed after it. The fix escapes the `[` and that `]`, giving `$description[\[Docs\](https://x.y)]` (written `\\[` and `\\]` in a JavaScript string), so ForgeScript prints `[Docs](https://x.y)`. It is only made when it removes the problem and adds no compile error; otherwise it is reported and left alone.
 
-**ReForgiParse does not re-indent code.** In ForgeScript, whitespace inside an argument or in the text around functions is part of what the bot sends. This prints four spaces before the name:
+**Re-indenting is opt-in: `--reindent`.** In ForgeScript, whitespace inside an argument or in the text around functions is part of what the bot sends, and ForgeScript only trims the two ends of a message. This prints four spaces before the name:
 
 ```
 $if[1==1;
@@ -151,7 +153,17 @@ $if[1==1;
 ]
 ```
 
-ForgeScript only trims the two ends of a message, so changing indentation can change a bot's messages. ReForgiParse leaves it as written.
+So `--fix` never touches indentation, and `--reindent` only does it when asked:
+
+- It sets the indentation of lines that start with a function, a `;` or a `]`, by nesting depth (a `;` or `]` lines up with its function). Lines that start with text, and blank lines, stay as written.
+- It leaves alone every line of an argument that also has text, since that whitespace is sent with the words. In a poll whose message lists options, partly as text and partly from `$if`, re-indenting the `$if` lines would shift those options in Discord.
+- It never moves a line inside a condition: there the whitespace is part of what is compared, and `$if[` followed by `1==1` on an indented new line is false.
+- It skips code that does not compile, and code in plain quoted strings. The result must parse the same apart from that whitespace, or nothing is written.
+- Every line it changes or leaves alone is listed, so you can look at the messages near them.
+
+What it cannot see: a line with no text around it whose function prints something, like `$username` alone in an `$if` branch. That indentation is still sent.
+
+Spaces per level come from the config's `indent` (`2`, `4` or `"tab"`), or are detected from the code, else 4.
 
 ## Config
 
@@ -172,6 +184,7 @@ ForgeScript only trims the two ends of a message, so changing indentation can ch
 | `exclude` | File or folder names to skip anywhere (`"tests"`), or paths from the bot's folder (`"src/legacy"`). |
 | `properties` | Properties whose strings are ForgeScript code. Default: `["code"]`. |
 | `known` | Functions made when the bot runs, which no file defines: never reported as unknown. |
+| `indent` | For `--reindent`: spaces per level (1 to 8), or `"tab"`. Default: detected from the code, else 4. |
 
 A config that cannot be used is an error, never a silent default: an unknown option, a misspelt rule (with the closest name), or a wrong level stops the check with exit code 2.
 
@@ -234,7 +247,7 @@ Project.load("./mybot").check()                                // the rules on a
 | `checkCode(code, table, { values })` | `{ rule, severity, message, start, end }[]`. Pass a `ValueChecker` to check argument values. |
 | `Project.load(folder).check()` | `{ file, line, column, endLine, endColumn, severity, rule, message }[]`. |
 | `extractCode(text)` | The `code:` strings of a JavaScript or TypeScript file, as ForgeScript receives them, with each character's offset in the file. |
-| `fixText(text, table, { brackets })` | `{ text, fixes, skipped }`: the file with the fixes made, what was fixed, and what was left alone and why. |
+| `fixText(text, table, { case, brackets, reindent, indent })` | `{ text, fixes, skipped }`: the file with the fixes made, what was fixed, and what was left alone and why. |
 | `loadConfig(folder)`, `directivesIn(text)`, `isSuppressed(...)` | The config and the directives, for tools of your own. |
 | `FunctionTable` | `fromForgeScript()`, `fromMetadata(...lists)`, or `new FunctionTable(raw)`. |
 | `nameIssues`, `render`, `walk`, `usage`, `suggest` | Helpers. |
@@ -243,7 +256,7 @@ Offsets are UTF-16 indexes, like JavaScript string indexes.
 
 ## How it is tested
 
-`npm test` (51 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
+`npm test` (55 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
 
 **ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ReForgiParse. `npm run parity` runs that diff; `REFORGIPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -255,13 +268,13 @@ What `npm test` checks:
 - **Every rule**, on code that has the problem and code that does not, with ForgeScript's resolvers deciding.
 - **Every rule's claim, on ForgeScript's interpreter**: each rule's example is run offline on ForgeScript's real interpreter, and ForgeScript must do what the message says. Where a message quotes ForgeScript's error, ForgeScript must log exactly that text.
 - **A whole bot**: an exact list of findings at their lines and columns; the command line's text, JSON and GitHub output and exit codes; an extension without metadata.
-- **Config, directives and fixes**, on real bots in temporary folders: levels, `off`, `known`, `exclude`, the `package.json` key, and an error for each kind of config mistake; every directive, ForgeLint's included. `--fix` must leave what ForgeScript's own compiler makes of the code unchanged; after `--fix-brackets`, ForgeScript's interpreter must print the text as written.
+- **Config, directives and fixes**, on real bots in temporary folders: levels, `off`, `known`, `exclude`, the `package.json` key, and an error for each kind of config mistake; every directive, ForgeLint's included. `--fix` must leave what ForgeScript's own compiler makes of the code unchanged; after `--fix-brackets`, ForgeScript's interpreter must print the text as written; after `--reindent`, the compiler must see the same code apart from indentation, and the interpreter shows the indentation it moves is part of what `$if` returns, and that whitespace in a condition is compared.
 
-Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx reforgiparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings.
+Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx reforgiparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings; and `--reindent` on those 16 bots leaves every one of their 101 code strings compiling the same on ForgeScript apart from indentation, with the lines among message text (a poll's list of options) left as written.
 
 ## Compared with ForgeLint
 
-[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript. Both have a config, comments that turn rules off (ReForgiParse reads ForgeLint's too), a letter-case fix and a bracket fix. ForgeLint also re-indents code and has a stray-bracket rule; ReForgiParse leaves indentation alone on purpose (see [Fixing](#fixing)), and its config is JSON rather than JavaScript. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ReForgiParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ReForgiParse knows it, and that its brackets get printed.
+[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript. Both have a config, comments that turn rules off (ReForgiParse reads ForgeLint's too), a letter-case fix, a bracket fix and re-indenting. ReForgiParse re-indents only when asked and leaves alone lines among message text and inside conditions (see [Fixing](#fixing)); its config is JSON rather than JavaScript. ForgeLint also has a stray-bracket rule. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ReForgiParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ReForgiParse knows it, and that its brackets get printed.
 
 ReForgiParse is written from scratch and shares no code with ForgeLint.
 

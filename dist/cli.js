@@ -50,6 +50,7 @@ Usage: reforgiparse [folder | files...] [options]
   --json              same as --format json
   --fix               fix what cannot change the bot (names' letter case), then check
   --fix-brackets      also escape [ ] in text that close a function too early (changes what the bot sends)
+  --reindent          indent lines that start with a function, ; or ] by nesting (can change what the bot sends)
   --config <file>     the config to use (default: reforgiparse.config.json, or "reforgiparse" in package.json)
   --property <name>   also read this property as code (repeatable; default: code)
   --no-warnings       report errors only
@@ -62,7 +63,7 @@ Usage: reforgiparse [folder | files...] [options]
 Exit code: 0 without errors, 1 with errors, 2 for bad usage.`;
 function parseArgs(argv) {
     const paths = [];
-    const out = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false, fix: false, fixBrackets: false, config: undefined };
+    const out = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false, fix: false, fixBrackets: false, reindent: false, config: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "-h" || a === "--help")
@@ -92,6 +93,8 @@ function parseArgs(argv) {
             out.fix = true;
         else if (a === "--fix-brackets")
             (out.fix = true), (out.fixBrackets = true);
+        else if (a === "--reindent")
+            out.reindent = true;
         else if (a === "--config") {
             const v = argv[++i];
             if (!v)
@@ -146,11 +149,11 @@ function main(argv = process.argv.slice(2)) {
         console.error(`config: ${e.message}`);
         return 2;
     }
-    if (args.fix) {
+    if (args.fix || args.reindent) {
         let fixed = 0;
         for (const file of project.files) {
             const before = fs.readFileSync(file, "utf8");
-            const r = (0, fix_1.fixText)(before, project.table, { properties: project.properties, brackets: args.fixBrackets });
+            const r = (0, fix_1.fixText)(before, project.table, { properties: project.properties, case: args.fix, brackets: args.fixBrackets, reindent: args.reindent, indent: project.config.indent });
             const rel = path.relative(project.root, file).split(path.sep).join("/");
             const where = (offset) => {
                 const head = before.slice(0, offset);

@@ -107,13 +107,19 @@ function validate(raw, where) {
         return list;
     };
     for (const key of Object.keys(raw)) {
-        if (!["rules", "include", "exclude", "properties", "known", "$schema"].includes(key))
-            throw new ConfigError(where, `unknown option "${key}" (options: rules, include, exclude, properties, known)`);
+        if (!["rules", "include", "exclude", "properties", "known", "indent", "$schema"].includes(key))
+            throw new ConfigError(where, `unknown option "${key}" (options: rules, include, exclude, properties, known, indent)`);
     }
     out.include = strings("include");
     out.exclude = strings("exclude");
     out.properties = strings("properties");
     out.known = strings("known");
+    const indent = raw.indent;
+    if (indent !== undefined) {
+        if (indent !== "tab" && !(typeof indent === "number" && Number.isInteger(indent) && indent >= 1 && indent <= 8))
+            throw new ConfigError(where, `"indent" must be a number of spaces from 1 to 8, or "tab", not ${JSON.stringify(indent)}`);
+        out.indent = indent;
+    }
     const rules = raw.rules;
     if (rules !== undefined) {
         if (!rules || typeof rules !== "object" || Array.isArray(rules))

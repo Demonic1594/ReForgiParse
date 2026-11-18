@@ -10,6 +10,8 @@ export interface Config {
     properties?: string[];
     /** Functions made when the bot runs, which no file defines: never reported as unknown. */
     known?: string[];
+    /** For --reindent: spaces per level, or "tab". Default: detected from the code, else 4. */
+    indent?: number | "tab";
 }
 export declare const CONFIG_FILE = "reforgiparse.config.json";
 export declare class ConfigError extends Error {

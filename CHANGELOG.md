@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1
+
+- **`--reindent`**, opt-in: indents lines that start with a function, `;` or `]` by nesting depth. Lines that start with text and blank lines stay as written, and so does every line of an argument that also has text (that whitespace is sent with the words) and every line inside a condition (whitespace there is compared: `$if[` then `1==1` on an indented line is false). The result must parse the same apart from that whitespace. The config's `indent` sets spaces per level, or `"tab"`.
+- Checked on 16 example bots: every code string compiles the same on ForgeScript apart from indentation, and a poll's list of options is no longer shifted.
+
 ## 0.4.0
 
 - **Renamed to ReForgiParse**, after the repository: package `reforgiparse`, command `npx reforgiparse`, `REFORGIPARSE_CORPUS` for the parity corpus. (0.1.0 to 0.3.1 were called ForgeParse.)
