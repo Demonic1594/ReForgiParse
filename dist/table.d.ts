@@ -62,7 +62,8 @@ export declare class FunctionTable {
     get functions(): IRawFunction[];
     /**
      * The functions an installed ForgeScript has registered (`FunctionManager.raw`), after the bot's
-     * extensions loaded theirs. Without a running bot, call `FunctionManager.loadNative()` first.
+     * extensions loaded theirs. When none are registered yet (a script, not a running bot), ForgeScript's
+     * own are loaded first, as `FunctionManager.loadNative()` does.
      */
     static fromForgeScript(forgescript?: ForgeScriptLike): FunctionTable;
     /**
@@ -106,6 +107,7 @@ export interface INativeArg {
 interface ForgeScriptLike {
     FunctionManager: {
         raw: IRawFunction[];
+        loadNative?(): void;
         get?(name: string): {
             path?: string;
             data: {

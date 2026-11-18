@@ -6,9 +6,11 @@
 // so a message is a fact about the bot, not a style opinion.
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Rules = void 0;
+exports.printedAsWritten = printedAsWritten;
 exports.checkCode = checkCode;
 exports.declaredSpelling = declaredSpelling;
 exports.unescapedBrackets = unescapedBrackets;
+exports.strayBrackets = strayBrackets;
 exports.suggest = suggest;
 exports.distance = distance;
 const names_1 = require("./names");
@@ -27,6 +29,7 @@ exports.Rules = {
     "misplaced-operator": { severity: "warning", description: "`!`, `#` or `@[...]` in the wrong order, or before another `$`: the call is printed as text." },
     "condition-operator": { severity: "warning", description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all." },
     "unescaped-bracket": { severity: "warning", description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed." },
+    "stray-bracket": { severity: "warning", description: "A `]` outside any function that no `[` before it opened: it closes nothing and is printed." },
     "color-value": { severity: "warning", description: "A colour ForgeScript reads differently from what was meant (`blue`, `123456`)." },
     "http-url": { severity: "warning", description: "An `http://` link: ForgeScript only accepts `https://`, and turns it into a broken link." },
     "unused-variable": { severity: "warning", description: "`$let` of a variable nothing in the code reads." },
@@ -43,14 +46,30 @@ const COMPILE_RULE = {
     "missing-closure": "unclosed-bracket",
 };
 /** Code that runs in a copy of the caller's variables, or code nobody can see from here. */
-const OPAQUE = new Set(["$eval", "$djseval", "$callfunction", "$calllocalfunction", "$scope", "$settimeout", "$setinterval", "$awaitcomponent", "$awaitmodalsubmit"]);
+const OPAQUE = new Set(["$eval", "$djseval", "$callfunction", "$calllocalfunction", "$scope", "$settimeout", "$setinterval", "$awaitcomponent", "$awaitmodalsubmit", "$coroutine"]);
+/** Functions that print their argument's code as written instead of running it (`rawValue` in ForgeScript). */
+const AS_WRITTEN = new Set(["$escapecode"]);
+/** What still matters in code that is printed, not run: whether it compiles, and where its brackets close. */
+const STILL_APPLIES = new Set(["missing-brackets", "too-many-arguments", "unclosed-bracket", "unescaped-bracket", "stray-bracket"]);
+/** The parts of the code that ForgeScript prints as written and never runs: the inside of `$escapeCode[...]`. */
+function printedAsWritten(result) {
+    const out = [];
+    for (const call of (0, parser_1.walk)(result.functions)) {
+        if (AS_WRITTEN.has(call.fn.name.toLowerCase()) && call.open !== null)
+            out.push({ start: call.open + 1, end: call.close ?? call.end, call });
+    }
+    return out;
+}
 /** The argument of an environment writer that names the variable. */
 const ENV_NAME_ARG = /^(variable|var|name|output variable|variable name)$/i;
 /** Every problem in one string of code. */
 function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code, table, { recover: true })) {
     const out = [];
     const add = (rule, message, start, end) => out.push({ rule, severity: exports.Rules[rule].severity, message, start, end: Math.max(end, start) });
-    const calls = Array.from((0, parser_1.walk)(result.functions));
+    // Code inside $escapeCode is printed, not run: only the problems that still apply to it are kept.
+    const printed = printedAsWritten(result);
+    const inPrinted = (at) => printed.some((p) => p.start <= at && at < p.end);
+    const calls = Array.from((0, parser_1.walk)(result.functions)).filter((c) => !inPrinted(c.start));
     const issues = (0, names_1.nameIssues)(code, table, result);
     for (const e of result.errors) {
         const fn = table.get(e.fn);
@@ -67,8 +86,12 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         }
         add(COMPILE_RULE[e.kind], help ? `${e.message}. ${help}` : e.message, e.start, e.end);
     }
+    // Where a misspelt or unknown name sits: the argument it is in is not checked as a value too.
+    const misnamed = (field) => issues.some((x) => field.start <= x.start && x.start < field.end);
     for (const call of calls) {
         const fn = call.fn;
+        // A call with a compile error inside never runs, and its arguments are only a guess after the error.
+        const compiles = !result.errors.some((e) => call.start <= e.start && e.start < call.end);
         if (fn.args === null && code[call.nameEnd] === "[") {
             add("unexpected-brackets", `${call.name} takes no arguments, so "[" and what follows it are printed as text`, call.nameEnd, call.nameEnd + 1);
         }
@@ -78,21 +101,29 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         if (declared)
             add("function-case", `Declared as $${declared}; $${call.written.slice(1)} works too, since names ignore case`, call.nameStart, call.nameEnd);
         // Only where ForgeScript resolves the arguments itself: functions like $if read their own fields.
-        if (call.fields && fn.params && fn.unwrap) {
-            const missing = missingArgument(fn, call.fields);
-            if (missing)
-                add("too-few-arguments", `${call.name} is missing its argument "${missing}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${missing}". Usage: ${(0, table_1.usage)(fn)}`, call.start, call.close !== null ? call.close + 1 : call.end);
+        if (call.fields && fn.params && fn.unwrap && compiles) {
+            // In ForgeScript's order (CompiledFunction.resolveArgs): each argument in turn, then the
+            // missing ones. The first refusal stops the command, so nothing after it is reported.
+            let stopped = false;
             if (options.values) {
-                call.fields.forEach((field, i) => {
+                for (const [i, field] of call.fields.entries()) {
                     const param = paramAt(fn.params, i);
                     const text = literal(field);
-                    if (!param || text === null)
-                        return;
+                    if (!param || text === null || misnamed(field))
+                        continue;
                     const problem = options.values.check(param, text, call.name);
-                    if (problem)
-                        out.push({ rule: problem.rule, severity: problem.severity, message: problem.message, start: field.start, end: field.end });
-                });
+                    if (!problem)
+                        continue;
+                    out.push({ rule: problem.rule, severity: problem.severity, message: problem.message, start: field.start, end: field.end });
+                    if (problem.severity === "error") {
+                        stopped = true;
+                        break;
+                    }
+                }
             }
+            const missing = stopped ? null : missingArgument(fn, call.fields);
+            if (missing)
+                add("too-few-arguments", `${call.name} is missing its argument "${missing}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${missing}". Usage: ${(0, table_1.usage)(fn)}`, call.start, call.close !== null ? call.close + 1 : call.end);
         }
         for (const field of call.fields ?? []) {
             if (field.kind === "condition")
@@ -100,6 +131,9 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
             for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field])
                 textProblems(code, call, part, add);
         }
+    }
+    for (const at of strayBrackets(code, result)) {
+        add("stray-bracket", "This ] closes no function, so ForgeScript prints it. If it is meant as text, escape it as \\] (\\\\] in a JavaScript string)", at, at + 1);
     }
     for (const b of unescapedBrackets(code, result)) {
         add("unescaped-bracket", `This ] closes ${b.call.name}, not the [ in its text, so what follows is printed. Escape both as \\[ and \\] (\\\\[ and \\\\] in a JavaScript string)`, b.close, b.close + 1);
@@ -118,7 +152,7 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
     // Code that does not compile never runs: what its variables would do does not matter.
     if (!result.errors.length)
         variableProblems(calls, options, add);
-    return out.sort((a, b) => a.start - b.start || a.end - b.end);
+    return out.filter((f) => STILL_APPLIES.has(f.rule) || !inPrinted(f.start)).sort((a, b) => a.start - b.start || a.end - b.end);
 }
 /** The first required argument the call does not have, or `null`. */
 function missingArgument(fn, fields) {
@@ -202,6 +236,43 @@ function unescapedBrackets(code, result) {
     }
     return out;
 }
+/**
+ * Every `]` in the code's own text (outside all functions) that no `[` before it in that text opened.
+ * ForgeScript prints it; `Page [1/3]` is left alone. Not for code that does not compile, where what is
+ * outside the functions is only the parser's guess after the error. A `[` in an argument's text that
+ * closes a function early pushes that function's own `]` out, one level per `[`, to the code's text:
+ * those are part of that mistake (`unescaped-bracket`) and go with its fix, so they are not counted.
+ */
+function strayBrackets(code, result) {
+    if (result.errors.length)
+        return [];
+    const early = unescapedBrackets(code, result);
+    const out = [];
+    let open = 0;
+    let k = 0;
+    for (let i = 0; i < code.length;) {
+        const call = result.functions[k];
+        if (call && i === call.start) {
+            for (const e of early)
+                if (call.start <= e.call.start && e.call.start < call.end)
+                    open += e.opens.length;
+            i = call.end;
+            k++;
+            continue;
+        }
+        const c = code[i];
+        if (c === "\\")
+            i += 2;
+        else {
+            if (c === "[")
+                open++;
+            else if (c === "]")
+                open ? open-- : out.push(i);
+            i++;
+        }
+    }
+    return out;
+}
 function textProblems(code, call, field, add) {
     for (const { at, ch, escaped } of textOf(code, field)) {
         if (escaped && /[A-Za-z0-9]/.test(ch)) {
@@ -270,7 +341,7 @@ function variableProblems(calls, options, add) {
         }
     }
     for (const [name, c] of set) {
-        if (read.has(name) || c.name.toLowerCase() !== "$let")
+        if (read.has(name) || c.name.toLowerCase() !== "$let" || name === "")
             continue;
         const value = c.fields?.[1];
         const only = value?.kind === "field" && value.functions.length === 1 && value.value.trim() === `[SYSTEM_FUNCTION(${value.functions[0].index})]` ? value.functions[0] : null;
@@ -295,8 +366,21 @@ function variableProblems(calls, options, add) {
         }
     }
 }
+/** Suggestions already worked out, per table: a bot repeats its typos. */
+const suggested = new WeakMap();
 /** The closest function name to a mistyped one, or `null` when none is close enough. `except` is never suggested. */
 function suggest(written, table, except) {
+    const key = `${written.toLowerCase()}\u0000${except?.name ?? ""}`;
+    let cache = suggested.get(table);
+    if (!cache)
+        suggested.set(table, (cache = new Map()));
+    if (cache.has(key))
+        return cache.get(key);
+    const found = closestName(written, table, except);
+    cache.set(key, found);
+    return found;
+}
+function closestName(written, table, except) {
     const word = written.replace(/^\$/, "").toLowerCase();
     const limit = word.length <= 4 ? 1 : word.length <= 8 ? 2 : 3;
     let best = null;

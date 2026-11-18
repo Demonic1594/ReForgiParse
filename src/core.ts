@@ -10,7 +10,7 @@
 
 import { Level } from "./config"
 import { directivesIn, isSuppressed } from "./directives"
-import { CodeSource, cook, DYNAMIC, extractCode, fileOffset, lineColumn, regexCanStart, skipRegex } from "./extract"
+import { CodeSource, cook, DYNAMIC, extractCode, fileOffset, lineIndex, regexCanStart, skipComment, skipRegex } from "./extract"
 import { checkCode, distance, Rules, Severity } from "./rules"
 import { FunctionTable } from "./table"
 import { ValueChecker } from "./values"
@@ -57,7 +57,8 @@ export function checkScript(text: string, table: FunctionTable, options: ScriptO
     const properties = options.properties?.length ? options.properties : ["code"]
     const found: Diagnostic[] = []
     const objects = objectLiterals(text)
-    for (const src of extractCode(text, properties)) found.push(...checkSource(text, file, src, objects, table, options))
+    const lineColumn = lineIndex(text)
+    for (const src of extractCode(text, properties)) found.push(...checkSource(text, lineColumn, file, src, innermost(objects, src), table, options))
 
     // Comments that turn rules off; one that names no rule is reported (forgelint- ones may name ForgeLint's rules).
     const directives = directivesIn(text)
@@ -79,16 +80,29 @@ export function checkScript(text: string, table: FunctionTable, options: ScriptO
     return out.sort((a, b) => a.line - b.line || a.column - b.column)
 }
 
-function checkSource(text: string, file: string, src: CodeSource, objects: ObjectLiteral[], table: FunctionTable, options: ScriptOptions): Diagnostic[] {
+/** The innermost object literal around a code string. Objects are in order of their `{`, and nest. */
+function innermost(objects: ObjectLiteral[], src: CodeSource): ObjectLiteral | undefined {
+    // The last object opened before the string, then outwards until one also ends after it.
+    let lo = 0
+    let hi = objects.length
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (objects[mid].start < src.start) lo = mid + 1
+        else hi = mid
+    }
+    for (let i = lo - 1; i >= 0; i--) if (src.end <= objects[i].end) return objects[i]
+    return undefined
+}
+
+function checkSource(text: string, lineColumn: (offset: number) => { line: number; column: number }, file: string, src: CodeSource, obj: ObjectLiteral | undefined, table: FunctionTable, options: ScriptOptions): Diagnostic[] {
     const out: Diagnostic[] = []
     const at = (start: number, end: number, severity: Severity, rule: string, message: string) => {
-        const a = lineColumn(text, fileOffset(src, start))
-        const b = lineColumn(text, end > start ? fileOffset(src, end - 1) + 1 : fileOffset(src, start))
+        const a = lineColumn(fileOffset(src, start))
+        const b = lineColumn(end > start ? fileOffset(src, end - 1) + 1 : fileOffset(src, start))
         out.push({ file, line: a.line, column: a.column, endLine: b.line, endColumn: b.column, severity, rule, message })
     }
-    const obj = objects.filter((o) => o.start < src.start && src.end <= o.end).pop()
     if (src.error) {
-        const a = lineColumn(text, src.start)
+        const a = lineColumn(src.start)
         out.push({ file, line: a.line, column: a.column, endLine: a.line, endColumn: a.column + 1, severity: "warning", rule: "unreadable-string", message: `This ${src.property}: string cannot be read to its end (${src.error}), so it was not checked` })
         return out
     }
@@ -103,8 +117,8 @@ function checkSource(text: string, file: string, src: CodeSource, objects: Objec
     // The command's type, in the same object as its code. Application commands (with `data`) are skipped.
     const type = obj?.props.get("type")
     if (options.events && obj && type && !obj.props.has("data") && !type.dynamic && !type.error && !options.events.has(type.value)) {
-        const a = lineColumn(text, type.start)
-        const b = lineColumn(text, type.end)
+        const a = lineColumn(type.start)
+        const b = lineColumn(type.end)
         const guess = closest(type.value, options.events)
         out.push({ file, line: a.line, column: a.column, endLine: b.line, endColumn: b.column, severity: "error", rule: "unknown-event", message: `"${type.value}" is not an event of ForgeScript or its extensions here, so this command never runs${guess ? `. Did you mean "${guess}"?` : ""}` })
     }
@@ -128,7 +142,7 @@ function objectLiterals(text: string): ObjectLiteral[] {
     for (let i = 0; i < text.length; ) {
         const c = text[i]
         if (c === "/" && (text[i + 1] === "/" || text[i + 1] === "*")) {
-            i = text[i + 1] === "/" ? (text.indexOf("\n", i) + 1 || text.length) : (text.indexOf("*/", i + 2) + 2 || text.length)
+            i = skipComment(text, i)
             continue
         }
         if (/\s/.test(c)) {

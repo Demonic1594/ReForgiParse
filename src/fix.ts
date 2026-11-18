@@ -18,9 +18,9 @@
 // argument it is in also has text (the whitespace would sit among words that are sent), and inside a
 // condition (where it is part of what is compared).
 
-import { CodeSource, extractCode } from "./extract"
+import { CodeSource, cook, extractCode } from "./extract"
 import { AnyField, Call, Field, parse, ParseResult, walk } from "./parser"
-import { declaredSpelling, unescapedBrackets } from "./rules"
+import { declaredSpelling, printedAsWritten, unescapedBrackets } from "./rules"
 import { FunctionTable } from "./table"
 
 export interface Fix {
@@ -77,10 +77,17 @@ function fixCase(text: string, table: FunctionTable, properties: string[], fixes
     const edits: Array<{ at: number; to: string; fix: Fix; src: CodeSource }> = []
     for (const src of extractCode(text, properties).filter(usable)) {
         const res = parse(src.value, table, { recover: true })
+        const printed = printedAsWritten(res)
         for (const call of walk(res.functions)) {
             const declared = declaredSpelling(call)
             if (!declared) continue
             const fix: Fix = { rule: "function-case", offset: -1, description: `$${call.written.slice(1)} → $${declared}` }
+            const inside = printed.find((p) => p.start <= call.start && call.start < p.end)
+            if (inside) {
+                // $escapeCode prints its code as written: changing a name there changes what the bot sends.
+                skipped.push({ ...fix, offset: src.offsets[call.nameStart] ?? src.start, description: `${fix.description}: inside ${inside.call.name}, which prints the code as written` })
+                continue
+            }
             const at = plainSpan(text, src, call.nameStart, call.nameEnd)
             if (at === null) {
                 skipped.push({ ...fix, offset: src.offsets[call.nameStart] ?? src.start, description: `${fix.description}: the name is written with escapes in the file` })
@@ -132,40 +139,70 @@ function backslashFor(text: string, src: CodeSource, i: number): { at: number; i
 }
 
 function fixBrackets(text: string, table: FunctionTable, properties: string[], fixes: Fix[], skipped: Fix[]): string {
-    const tried = new Set<string>()
-    for (let round = 0; round < 500; round++) {
-        let applied = false
-        for (const src of extractCode(text, properties).filter(usable)) {
+    // From the last code string to the first: edits inside one never move a string earlier in the file.
+    for (const start of extractCode(text, properties).filter(usable).map((s) => s.start).reverse()) {
+        // Backslashes added so far in this string, to give each fix its offset in the file as it was.
+        const added: number[] = []
+        const original = (at: number) => at - added.filter((x) => x < at).length
+        const tried = new Set<number>()
+        for (;;) {
+            const src = sourceAt(text, start)
             const res = parse(src.value, table, { recover: true })
-            for (const item of unescapedBrackets(src.value, res)) {
-                const key = `${src.start}:${src.offsets[item.close]}`
-                if (tried.has(key)) continue
-                tried.add(key)
+            const before = unescapedBrackets(src.value, res)
+            const planned: Array<{ fix: Fix; name: string; edits: Array<{ at: number; insert: string }> }> = []
+            for (const item of before) {
+                const offset = original(src.offsets[item.close])
+                if (tried.has(offset)) continue
+                tried.add(offset)
+                const fix: Fix = { rule: "unescaped-bracket", offset, description: `escaped the [ ] in ${item.call.name}'s text` }
                 const edits = [...item.opens, item.close].map((i) => backslashFor(text, src, i))
-                const fix: Fix = { rule: "unescaped-bracket", offset: src.offsets[item.close], description: `escaped the [ ] in ${item.call.name}'s text` }
-                if (edits.some((e) => e === null)) {
-                    skipped.push({ ...fix, description: `${fix.description}: a bracket is written with escapes in the file` })
-                    continue
-                }
+                if (edits.some((e) => e === null)) skipped.push({ ...fix, description: `${fix.description}: a bracket is written with escapes in the file` })
+                else planned.push({ fix, name: item.call.name, edits: edits as Array<{ at: number; insert: string }> })
+            }
+            if (!planned.length) break
+            // Every bracket of the string at once when that removes each problem it should, else one at a time.
+            const attempt = (batch: typeof planned) => {
                 let next = text
-                for (const e of (edits as Array<{ at: number; insert: string }>).sort((x, y) => y.at - x.at)) next = next.slice(0, e.at) + e.insert + next.slice(e.at)
-                const after = extractCode(next, properties).find((s) => s.start === src.start)
-                const now = after && parse(after.value, table, { recover: true })
-                const better = now && now.errors.length <= res.errors.length && unescapedBrackets(after!.value, now).length < unescapedBrackets(src.value, res).length
-                if (!better) {
-                    skipped.push({ ...fix, description: `${fix.description}: escaping them would leave ${item.call.name} unclosed or another bracket wrong` })
+                for (const e of batch.flatMap((p) => p.edits).sort((x, y) => y.at - x.at)) next = next.slice(0, e.at) + e.insert + next.slice(e.at)
+                const after = sourceAt(next, start)
+                const now = parse(after.value, table, { recover: true })
+                const left = unescapedBrackets(after.value, now).length
+                const better = now.errors.length <= res.errors.length && left <= before.length - batch.length
+                return better ? next : null
+            }
+            const accept = (batch: typeof planned, next: string) => {
+                for (const e of batch.flatMap((p) => p.edits).sort((x, y) => y.at - x.at)) {
+                    for (let k = 0; k < added.length; k++) if (added[k] >= e.at) added[k] += e.insert.length
+                    for (let k = 0; k < e.insert.length; k++) added.push(e.at + k)
+                }
+                fixes.push(...batch.map((p) => p.fix))
+                text = next
+            }
+            const all = attempt(planned)
+            if (all !== null) {
+                accept(planned, all)
+                continue
+            }
+            for (const p of planned) {
+                const one = attempt([p])
+                if (one === null) {
+                    skipped.push({ ...p.fix, description: `${p.fix.description}: escaping them would leave ${p.name} unclosed or another bracket wrong` })
                     continue
                 }
-                fixes.push(fix)
-                text = next
-                applied = true
+                // One fixed: the string changed, so the others are planned again from it.
+                accept([p], one)
+                for (const q of planned) if (q !== p) tried.delete(q.fix.offset)
                 break
             }
-            if (applied) break
         }
-        if (!applied) break
     }
     return text
+}
+
+/** The code string whose opening quote is at `start`, read from the text as it is now. */
+function sourceAt(text: string, start: number): CodeSource {
+    const r = cook(text, start)
+    return { property: "", value: r.value, offsets: r.offsets, start, end: r.end, dynamic: r.dynamic, error: r.error }
 }
 
 /** The nesting depth at a position: how many calls with brackets enclose it. */
@@ -183,7 +220,11 @@ function sameIgnoringIndent(a: ParseResult, b: ParseResult): boolean {
 
 function reindent(text: string, table: FunctionTable, properties: string[], indent: number | "tab" | undefined, fixes: Fix[], skipped: Fix[]): string {
     // From the end of the file, so earlier offsets stay valid.
-    const sources = extractCode(text, properties).filter((s) => usable(s) && text[s.start] === "`" && s.value.includes("\n"))
+    const all = extractCode(text, properties).filter((s) => usable(s) && s.value.includes("\n"))
+    // Code whose lines are all \n escapes sits on one line of the file: nothing to indent there.
+    const fileLines = (s: CodeSource) => [...s.value].some((ch, i) => ch === "\n" && (text[s.offsets[i]] === "\n" || text[s.offsets[i]] === "\r"))
+    for (const s of all) if (!fileLines(s)) skipped.push({ rule: "reindent", offset: s.start, description: "not re-indented: its lines are \\n escapes in a JavaScript string, not lines of the file" })
+    const sources = all.filter(fileLines)
     for (const src of sources.reverse()) {
         const res = parse(src.value, table, { recover: true })
         if (res.errors.length) {

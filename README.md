@@ -109,6 +109,13 @@ Colours are used on a terminal. Set `NO_COLOR` to turn them off, or `FORCE_COLOR
 
 ## Rules
 
+Each finding states what ForgeScript does with the code. Some consequences:
+
+- **One mistake gives one finding.** A misspelt name in an argument is reported as the name, not also as an invalid value. A `]` left over by an unescaped `[` belongs to that `unescaped-bracket` finding.
+- **Only the first rejected argument is reported.** ForgeScript reads a call's arguments in order and stops the command at the first it rejects.
+- **Code that does not compile gets compile errors only.** No argument values, variables or brackets are checked inside a call that does not compile.
+- **Code inside `$escapeCode[...]` is printed, not run.** Only compile errors and bracket problems apply to it.
+
 ### Errors
 
 | Rule | Example | Effect |
@@ -129,6 +136,7 @@ Colours are used on a terminal. Set `NO_COLOR` to turn them off, or `FORCE_COLOR
 | `unexpected-brackets` | `$ping[x]` | The brackets and their content are printed. |
 | `misplaced-operator` | `$#!ping` | The call is printed as text. |
 | `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function. |
+| `stray-bracket` | `$let[a;1]]` | The `]` closes nothing and is printed. |
 | `condition-operator` | `$if[a==1&&b==2;...]` | Only the first operator is evaluated. |
 | `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
 | `http-url` | `http://...` as a URL argument | Converted to an invalid URL. |
@@ -267,11 +275,9 @@ Findings appear as annotations on pull requests; errors fail the job. Add `--max
 ## API
 
 ```js
-const { FunctionManager } = require("@tryforge/forgescript")
 const { FunctionTable, parse, checkCode, Project } = require("reforgiparse")
 
-FunctionManager.loadNative()
-const table = FunctionTable.fromForgeScript()
+const table = FunctionTable.fromForgeScript() // the installed ForgeScript's functions
 
 parse("$if[$get[a]==1;yes;no]", table)                 // parse tree
 parse("$get[a", table)                                 // throws CompileError at line 1, column 6

@@ -12,8 +12,10 @@ exports.DYNAMIC = void 0;
 exports.cook = cook;
 exports.regexCanStart = regexCanStart;
 exports.skipRegex = skipRegex;
+exports.skipComment = skipComment;
 exports.extractCode = extractCode;
 exports.fileOffset = fileOffset;
+exports.lineIndex = lineIndex;
 exports.lineColumn = lineColumn;
 /** Stands for each `${...}` in a template literal. */
 exports.DYNAMIC = "\u0000";
@@ -165,6 +167,7 @@ function skipRegex(text, i) {
     }
     return i + 1;
 }
+/** The end of the line or block comment starting at `text[i]`; the end of the text when a block comment is never closed. */
 function skipComment(text, i) {
     if (text[i + 1] === "/") {
         const j = text.indexOf("\n", i);
@@ -221,6 +224,29 @@ function fileOffset(source, index) {
     if (index >= source.offsets.length)
         return source.offsets[source.offsets.length - 1] + 1;
     return source.offsets[Math.max(0, index)];
+}
+/**
+ * Line and column lookups for one text, after one pass over it: for many offsets in the same file
+ * (each finding's start and end), where {@link lineColumn} would scan from the start every time.
+ */
+function lineIndex(text) {
+    const starts = [0];
+    for (let i = 0; i < text.length; i++)
+        if (text[i] === "\n")
+            starts.push(i + 1);
+    return (offset) => {
+        const at = Math.min(Math.max(offset, 0), text.length);
+        let lo = 0;
+        let hi = starts.length - 1;
+        while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1;
+            if (starts[mid] <= at)
+                lo = mid;
+            else
+                hi = mid - 1;
+        }
+        return { line: lo + 1, column: offset - starts[lo] + 1 };
+    };
 }
 /** 1-based line and column of a file offset. */
 function lineColumn(text, offset) {

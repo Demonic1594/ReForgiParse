@@ -56,6 +56,10 @@ export declare const Rules: {
         readonly severity: "warning";
         readonly description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed.";
     };
+    readonly "stray-bracket": {
+        readonly severity: "warning";
+        readonly description: "A `]` outside any function that no `[` before it opened: it closes nothing and is printed.";
+    };
     readonly "color-value": {
         readonly severity: "warning";
         readonly description: "A colour ForgeScript reads differently from what was meant (`blue`, `123456`).";
@@ -100,6 +104,12 @@ export interface CheckOptions {
     /** The code is a custom function's body: it can read the caller's `$let` variables. */
     customFunction?: boolean;
 }
+/** The parts of the code that ForgeScript prints as written and never runs: the inside of `$escapeCode[...]`. */
+export declare function printedAsWritten(result: ParseResult): Array<{
+    start: number;
+    end: number;
+    call: Call;
+}>;
 /** Every problem in one string of code. */
 export declare function checkCode(code: string, table: FunctionTable, options?: CheckOptions, result?: ParseResult): Finding[];
 /** The spelling the function or alias is declared with, when the written one differs only in case. */
@@ -116,6 +126,14 @@ export interface UnescapedBracket {
  * is only the parser's guess after the error.
  */
 export declare function unescapedBrackets(code: string, result: ParseResult): UnescapedBracket[];
+/**
+ * Every `]` in the code's own text (outside all functions) that no `[` before it in that text opened.
+ * ForgeScript prints it; `Page [1/3]` is left alone. Not for code that does not compile, where what is
+ * outside the functions is only the parser's guess after the error. A `[` in an argument's text that
+ * closes a function early pushes that function's own `]` out, one level per `[`, to the code's text:
+ * those are part of that mistake (`unescaped-bracket`) and go with its fix, so they are not counted.
+ */
+export declare function strayBrackets(code: string, result: ParseResult): number[];
 /** The closest function name to a mistyped one, or `null` when none is close enough. `except` is never suggested. */
 export declare function suggest(written: string, table: FunctionTable, except?: IRawFunction): string | null;
 /** Edit distance with transpositions, giving up above `limit`. */

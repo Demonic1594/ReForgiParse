@@ -34,6 +34,7 @@ const CASES = {
     "function-case": { bad: ["$AUTHORID", "$authorid"], good: ["$authorID"] },
     "too-few-arguments": { bad: ["$addField[Coins]"], good: ["$addField[Coins;5]", "$if[1==1]"] },
     "unexpected-brackets": { bad: ["$ping[x]"], good: ["$ping"] },
+    "stray-bracket": { bad: ["$let[a;1]]", "$if[1==1;yes]]", "done]", "a] [b]"], good: ["Page [1/3]", "$description[x]", "\\]", "$let[a;1]", "$ping[x]", "$get]", "[[a]]"] },
 }
 
 for (const [rule, { bad, good }] of Object.entries(CASES)) {
@@ -97,4 +98,31 @@ test("brackets are not reported where a compile error decides how the rest is re
 
 test("an empty argument is called empty", () => {
     assert.match(messages("$sendMessage[;hi]", "invalid-argument")[0], /^\$sendMessage: "channel ID" is empty, but must be an ID \(16 to 23 digits\)\. ForgeScript stops the command: "Given value  for argument channel ID is not of type Channel"$/)
+})
+
+test("one mistake is one finding: no argument value or variable noise around it", () => {
+    // A misspelt name in an argument: the name is the problem, not the value it leaves.
+    assert.deepEqual(rules("$roleExists[$guidlID;123456789012345678]"), ["unknown-function"])
+    // In a call that does not compile, its arguments are only a guess: no runtime findings for it.
+    assert.deepEqual(rules("$addField[a"), ["unclosed-bracket"])
+    // A variable with no name is not reported as an unused variable named "".
+    assert.ok(!rules("$let[;1]").includes("unused-variable"))
+    // The ] left over when a [ in text closed a function early is part of that one mistake.
+    assert.deepEqual(rules("$description[[Docs](https://x.y)]"), ["unescaped-bracket"])
+    assert.deepEqual(rules("$if[1==1;$description[[a](b)];no]"), ["unescaped-bracket"])
+    // Only the ] that mistake leaves over: another stray ] in the same code is still reported.
+    assert.deepEqual(rules("$description[[a](b)]\n$let[a;1]$get[a]]"), ["unescaped-bracket", "stray-bracket"])
+    assert.deepEqual(rules("$description[[a][b](c)]"), ["unescaped-bracket"])
+})
+
+test("code inside $escapeCode is printed as written, never run: only compile and bracket problems count", () => {
+    assert.deepEqual(rules("$escapeCode[$AUTHORID $sendMesage $pingms $round[abc] $let[a;1] $get[b] $if[x&&y;1]]"), [])
+    assert.deepEqual(rules("$esc[$AUTHORID]"), [])
+    // Its brackets and compile errors still decide what ForgeScript does with the code.
+    assert.deepEqual(rules("$escapeCode[$get]"), ["missing-brackets"])
+    assert.deepEqual(rules("$escapeCode[[a](b)]"), ["unescaped-bracket"])
+    // A variable set or read only inside it is neither set nor read.
+    assert.deepEqual(rules("$escapeCode[$let[a;1]]$get[a]"), ["unset-variable"])
+    // $coroutine runs its code out of sight: the variable rules stand down.
+    assert.deepEqual(rules("$let[a;1]$coroutine[$get[a]]"), [])
 })

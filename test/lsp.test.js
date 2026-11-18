@@ -29,6 +29,8 @@ function bot(files) {
 function client(dir) {
     const server = spawn(process.execPath, [CLI, "--lsp"], { cwd: dir, stdio: ["pipe", "pipe", "pipe"] })
     servers.push(server)
+    let stderr = ""
+    server.stderr.on("data", (d) => (stderr += d))
     let buffer = Buffer.alloc(0)
     let id = 0
     const pending = new Map()
@@ -62,6 +64,7 @@ function client(dir) {
     }
     return {
         server,
+        stderr: () => stderr,
         request: (method, params) => new Promise((resolve) => {
             const n = ++id
             pending.set(n, resolve)
@@ -191,6 +194,11 @@ test("fix-all, a closed document, unknown requests, and a broken config reported
     const after = c.diagnostics(uri)
     c.notify("textDocument/didSave", { textDocument: { uri } })
     assert.deepEqual((await after).map((d) => d.code), ["function-case", "function-case"])
+    // Reading the bot again does not register ForgeScript's functions a second time (ForgeScript warns then).
+    const again = c.diagnostics(uri)
+    c.notify("textDocument/didSave", { textDocument: { uri } })
+    await again
+    assert.doesNotMatch(c.stderr(), /Attempted to override/)
 
     const res = await c.request("textDocument/codeAction", { textDocument: { uri }, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, context: { diagnostics: [], only: ["source.fixAll"] } })
     assert.equal(res.result.length, 1)
@@ -261,6 +269,21 @@ test("hover shows a function's usage and description, and completion offers name
     assert.deepEqual((await c.request("textDocument/completion", { textDocument: { uri }, position: at("\\$se", 4) })).result.items, [])
     assert.deepEqual((await c.request("textDocument/completion", { textDocument: { uri }, position: { line: 1, character: 20 } })).result.items, [])
 
+    await c.request("shutdown", null)
+    c.notify("exit", null)
+    assert.equal(await c.exited, 0)
+})
+
+test("a document with an unfinished comment gets its diagnostics, and the server keeps answering", async () => {
+    const text = "module.exports = { code: `$pingms` }\n/* still typing"
+    const dir = bot({ "commands/a.js": text })
+    const uri = pathToFileURL(path.join(dir, "commands/a.js")).href
+    const c = client(dir)
+    await c.request("initialize", { processId: process.pid, rootUri: pathToFileURL(dir).href, capabilities: {} })
+    const open = c.diagnostics(uri)
+    c.notify("textDocument/didOpen", { textDocument: { uri, languageId: "javascript", version: 1, text } })
+    assert.deepEqual((await open).map((d) => d.code), ["glued-name"])
+    assert.equal((await c.request("textDocument/hover", { textDocument: { uri }, position: { line: 0, character: 27 } })).result.contents.kind, "markdown")
     await c.request("shutdown", null)
     c.notify("exit", null)
     assert.equal(await c.exited, 0)

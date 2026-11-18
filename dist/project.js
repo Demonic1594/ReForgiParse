@@ -156,7 +156,9 @@ class Project {
         }
         if (forgescript) {
             try {
-                forgescript.FunctionManager.loadNative();
+                // Once per process: loading them again (the language server reads the bot on every save) makes ForgeScript warn.
+                if (!forgescript.FunctionManager.get?.("$ping"))
+                    forgescript.FunctionManager.loadNative();
                 add((0, table_1.withParams)(forgescript), { name: "@tryforge/forgescript", version: version(forgeDir), functions: 0 });
                 const native = forgeScriptEvents(forgeDir);
                 if (native)
