@@ -133,7 +133,7 @@ test("function-case: the name runs as the declared function", () => {
     assert.equal(Compiler.compile("$AUTHORID").functions[0].data.name, "$authorID")
 })
 
-test("compile errors: ForgeScript refuses the code with the message ForgeParse gives", () => {
+test("compile errors: ForgeScript refuses the code with the message ReForgiParse gives", () => {
     for (const [code, rule] of [["$sendMessage", "missing-brackets"], ["$get[a;b]", "too-many-arguments"], ["$get[a", "unclosed-bracket"]]) {
         const f = finding(code, rule)
         const theirs = (() => {
@@ -144,5 +144,11 @@ test("compile errors: ForgeScript refuses the code with the message ForgeParse g
             }
         })()
         assert.ok(theirs && theirs.includes(f.message.split(". Usage")[0]), `${code}: ${theirs}`)
+    }
+})
+
+test("directives: $c[reforgiparse-...] prints nothing, wherever it is", async () => {
+    for (const code of ["[$c[reforgiparse-disable-next-line unknown-function]]", "[$c[reforgiparse-disable]]", "a$c[reforgiparse-disable-line glued-name]b"]) {
+        assert.equal((await run(code)).output, code.startsWith("[") ? "[]" : "ab", code)
     }
 })

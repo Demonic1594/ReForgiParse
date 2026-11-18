@@ -1,6 +1,6 @@
-# Contributing to ForgeParse
+# Contributing to ReForgiParse
 
-ForgeParse promises that it reads code exactly as ForgeScript does, and that every rule says what
+ReForgiParse promises that it reads code exactly as ForgeScript does, and that every rule says what
 ForgeScript really does with the code. These rules keep that promise.
 
 ## ForgeScript is the reference
@@ -10,11 +10,11 @@ ForgeScript really does with the code. These rules keep that promise.
    `new Compiler(undefined, code).compile()` of the installed `@tryforge/forgescript`, given the same
    function list, before it is committed:
    - `npm run parity`: a hand-written corpus and 20,000 seeded random inputs.
-   - `FORGEPARSE_CORPUS=<folder of bots or docs> npm run parity`: every ForgeScript snippet under it.
+   - `REFORGIPARSE_CORPUS=<folder of bots or docs> npm run parity`: every ForgeScript snippet under it.
    - The oldest supported ForgeScript: `npm i --no-save @tryforge/forgescript@2.5.0 && npm test`, then `npm ci`.
 
    Tree, template and compile errors (message, line, column) must be identical. A difference means
-   ForgeParse is wrong, never ForgeScript: match it, quirks included.
+   ReForgiParse is wrong, never ForgeScript: match it, quirks included.
 2. **Put new kinds of input into the diff.** A bug or a new syntax case goes into
    `test/support/corpus.js`, and a whole class of input into `test/support/fuzz.js`. Show the test
    fails without the fix.
@@ -30,8 +30,8 @@ ForgeScript really does with the code. These rules keep that promise.
    what ForgeScript logs. Prefer calling ForgeScript's own code (its resolvers, `Conditions`,
    `Compiler`) over copying its logic, so a check follows the bot's version. Never write
    "ForgeScript does X" from memory.
-5. **Working bots stay clean.** Before a release, run `npx forgeparse` on working bots with their
-   extensions installed. Every finding there is a bug in ForgeParse until shown otherwise.
+5. **Working bots stay clean.** Before a release, run `npx reforgiparse` on working bots with their
+   extensions installed. Every finding there is a bug in ReForgiParse until shown otherwise.
 
 ## Conventions
 

@@ -37,15 +37,24 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Project = void 0;
+exports.Project = exports.ProjectRules = void 0;
 exports.readNatives = readNatives;
+exports.closest = closest;
 exports.customAsRaw = customAsRaw;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const extract_1 = require("./extract");
+const config_1 = require("./config");
+const directives_1 = require("./directives");
 const rules_1 = require("./rules");
 const values_1 = require("./values");
 const table_1 = require("./table");
+/** Rules that need the whole file, not only the code: what they find and their default level. */
+exports.ProjectRules = {
+    "unknown-event": { severity: "error", description: "A command's `type` that no loaded package has as an event: the command never runs." },
+    "unreadable-string": { severity: "warning", description: "A `code:` string JavaScript would not end where it seems to: it is not checked." },
+    "unknown-rule": { severity: "warning", description: "A `reforgiparse-disable` comment that names no rule: it turns nothing off." },
+};
 /** Extensions of files that are read. */
 const CODE_FILE = /\.(c|m)?(j|t)s$/;
 /** Skipped at the top of the project only (`commands/docs` is still read). */
@@ -54,6 +63,7 @@ class Project {
     root;
     files;
     properties;
+    config;
     table;
     sources;
     customFunctions;
@@ -63,10 +73,11 @@ class Project {
     values;
     /** Event names a command's `type` can be, `null` when ForgeScript's could not be read. */
     events;
-    constructor(root, files, properties, loaded) {
+    constructor(root, files, properties, config, loaded) {
         this.root = root;
         this.files = files;
         this.properties = properties;
+        this.config = config;
         this.values = loaded.values;
         this.events = loaded.events;
         this.table = loaded.table;
@@ -77,8 +88,17 @@ class Project {
     /** Reads a bot's folder: its `package.json`, installed packages and code files. */
     static load(root, options = {}) {
         root = path.resolve(root);
-        const properties = options.properties?.length ? options.properties : ["code"];
-        const files = (options.include?.length ? options.include : ["."]).flatMap((p) => listFiles(root, path.resolve(root, p)));
+        const config = options.config ?? (0, config_1.loadConfig)(root).config;
+        for (const rule of Object.keys(config.rules ?? {})) {
+            if (!(rule in rules_1.Rules) && !(rule in exports.ProjectRules)) {
+                const guess = closest(rule, [...Object.keys(rules_1.Rules), ...Object.keys(exports.ProjectRules)]);
+                throw new config_1.ConfigError("config", `"rules" names "${rule}", which is not a rule${guess ? ` (did you mean "${guess}"?)` : ""}. See reforgiparse --rules`);
+            }
+        }
+        const properties = options.properties?.length ? options.properties : config.properties?.length ? config.properties : ["code"];
+        const exclude = config.exclude ?? [];
+        const include = options.include?.length ? options.include : config.include?.length ? config.include : ["."];
+        const files = include.flatMap((p) => listFiles(root, path.resolve(root, p), exclude));
         const notes = [];
         const sources = [];
         const raw = [];
@@ -154,7 +174,7 @@ class Project {
         }
         // Custom functions are added last, and replace a function of the same name, as FunctionManager.add does.
         // Read from the whole bot, even when only some files are checked: they call functions defined elsewhere.
-        const everyFile = options.include?.length ? listFiles(root, root) : files;
+        const everyFile = include.length === 1 && include[0] === "." ? files : listFiles(root, root, exclude);
         const custom = everyFile.flatMap((f) => customFunctions(root, f, properties));
         for (const c of custom) {
             const fn = customAsRaw(c);
@@ -166,6 +186,14 @@ class Project {
         }
         if (custom.length)
             sources.push({ name: "custom", version: null, functions: custom.length });
+        // Names the config says exist (made when the bot runs): any arguments, and unknown use of variables.
+        for (const k of config.known ?? []) {
+            const name = k.startsWith("$") ? k : `$${k}`;
+            if (!raw.some((x) => x.name.toLowerCase() === name.toLowerCase()))
+                raw.push({ name, aliases: null, args: { required: false, fields: [{ rest: true }] }, package: "known" });
+        }
+        if (config.known?.length)
+            sources.push({ name: "known (config)", version: null, functions: config.known.length });
         let discord = null;
         try {
             discord = forgeDir ? require(require.resolve("discord.js", { paths: [forgeDir] })) : null;
@@ -174,7 +202,7 @@ class Project {
             // Colour names are then not known: only hex and numbers are taken as colours.
         }
         const values = new values_1.ValueChecker(forgescript, discord);
-        return new Project(root, files, properties, { table: new table_1.FunctionTable(raw), sources, custom, notes, events, values });
+        return new Project(root, files, properties, config, { table: new table_1.FunctionTable(raw), sources, custom, notes, events, values });
     }
     /** Checks every file. */
     check() {
@@ -185,10 +213,30 @@ class Project {
         const abs = path.resolve(this.root, file);
         const text = fs.readFileSync(abs, "utf8");
         const rel = path.relative(this.root, abs).split(path.sep).join("/");
-        const out = [];
+        const found = [];
         const objects = objectLiterals(text);
         for (const src of (0, extract_1.extractCode)(text, this.properties))
-            out.push(...this.checkSource(text, rel, src, objects));
+            found.push(...this.checkSource(text, rel, src, objects));
+        // Comments that turn rules off; one that names no rule is reported (forgelint- ones may name ForgeLint's rules).
+        const directives = (0, directives_1.directivesIn)(text);
+        for (const d of directives) {
+            if (d.prefix !== "reforgiparse")
+                continue;
+            for (const rule of d.rules) {
+                if (rule in rules_1.Rules || rule in exports.ProjectRules)
+                    continue;
+                const guess = closest(rule, [...Object.keys(rules_1.Rules), ...Object.keys(exports.ProjectRules)]);
+                found.push({ file: rel, line: d.line, column: d.column, endLine: d.line, endColumn: d.column + 1, severity: "warning", rule: "unknown-rule", message: `reforgiparse-${d.kind} names "${rule}", which is not a rule, so it turns nothing off${guess ? `. Did you mean "${guess}"?` : ""}` });
+            }
+        }
+        const levels = this.config.rules ?? {};
+        const out = [];
+        for (const d of found) {
+            const level = levels[d.rule];
+            if (level === "off" || (0, directives_1.isSuppressed)(directives, d.line, d.rule))
+                continue;
+            out.push(level ? { ...d, severity: level } : d);
+        }
         return out.sort((a, b) => a.line - b.line || a.column - b.column);
     }
     checkSource(text, file, src, objects) {
@@ -380,17 +428,22 @@ function closest(word, names) {
     }
     return bestD <= Math.max(1, Math.floor(word.length / 4)) ? best : null;
 }
-function listFiles(root, start) {
+function listFiles(root, start, exclude = []) {
     if (!fs.existsSync(start))
         return [];
+    const rel = (p) => path.relative(root, p).split(path.sep).join("/");
+    const clean = (x) => x.replace(/^\.\//, "").replace(/\/$/, "");
+    const excluded = (p, name) => exclude.some((x) => x === name || clean(x) === rel(p));
     if (fs.statSync(start).isFile())
-        return CODE_FILE.test(start) && !start.endsWith(".d.ts") ? [start] : [];
+        return CODE_FILE.test(start) && !start.endsWith(".d.ts") && !excluded(start, path.basename(start)) ? [start] : [];
     const out = [];
     const visit = (dir) => {
         for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
             if (e.name === "node_modules" || e.name.startsWith("."))
                 continue;
             const p = path.join(dir, e.name);
+            if (excluded(p, e.name))
+                continue;
             if (e.isDirectory()) {
                 if (dir === root && SKIP_AT_TOP.has(e.name))
                     continue;

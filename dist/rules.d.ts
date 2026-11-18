@@ -1,4 +1,4 @@
-import { ParseResult } from "./parser";
+import { Call, ParseResult } from "./parser";
 import { FunctionTable } from "./table";
 import { ValueChecker } from "./values";
 export type Severity = "error" | "warning" | "info";
@@ -102,6 +102,16 @@ export interface CheckOptions {
 }
 /** Every problem in one string of code. */
 export declare function checkCode(code: string, table: FunctionTable, options?: CheckOptions, result?: ParseResult): Finding[];
+/** The spelling the function or alias is declared with, when the written one differs only in case. */
+export declare function declaredSpelling(call: Call): string | null;
+/** A `]` that closes its function while a `[` in the argument's text is still open: the `[`s and the `]`. */
+export interface UnescapedBracket {
+    call: Call;
+    opens: number[];
+    close: number;
+}
+/** Every argument whose `]` closes its function while a `[` in its text is open. */
+export declare function unescapedBrackets(code: string, result: ParseResult): UnescapedBracket[];
 /** The closest function name to a mistyped one, or `null` when none is close enough. */
 export declare function suggest(written: string, table: FunctionTable): string | null;
 /** Edit distance with transpositions, giving up above `limit`. */
