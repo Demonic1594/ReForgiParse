@@ -36,7 +36,10 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.main = main;
 // SPDX-License-Identifier: LGPL-3.0-or-later
+const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
+const config_1 = require("./config");
+const fix_1 = require("./fix");
 const project_1 = require("./project");
 const rules_1 = require("./rules");
 const HELP = `reforgiparse: checks a ForgeScript bot's code the way ForgeScript compiles and runs it.
@@ -45,6 +48,9 @@ Usage: reforgiparse [folder | files...] [options]
 
   --format <name>     text (default), json, or github (annotations in GitHub Actions)
   --json              same as --format json
+  --fix               fix what cannot change the bot (names' letter case), then check
+  --fix-brackets      also escape [ ] in text that close a function too early (changes what the bot sends)
+  --config <file>     the config to use (default: reforgiparse.config.json, or "reforgiparse" in package.json)
   --property <name>   also read this property as code (repeatable; default: code)
   --no-warnings       report errors only
   --no-info           leave out info (spelling hints)
@@ -56,7 +62,7 @@ Usage: reforgiparse [folder | files...] [options]
 Exit code: 0 without errors, 1 with errors, 2 for bad usage.`;
 function parseArgs(argv) {
     const paths = [];
-    const out = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false };
+    const out = { root: ".", include: [], format: "text", properties: [], warnings: true, info: true, quiet: false, fix: false, fixBrackets: false, config: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "-h" || a === "--help")
@@ -64,10 +70,8 @@ function parseArgs(argv) {
         if (a === "-v" || a === "--version")
             return console.log(require("../package.json").version), 0;
         if (a === "--rules") {
-            for (const [name, r] of Object.entries(rules_1.Rules))
+            for (const [name, r] of [...Object.entries(rules_1.Rules), ...Object.entries(project_1.ProjectRules)])
                 console.log(`${name.padEnd(20)} ${r.severity.padEnd(8)} ${r.description}`);
-            console.log(`${"unknown-event".padEnd(20)} ${"error".padEnd(8)} A command's type that no loaded package has as an event: the command never runs.`);
-            console.log(`${"unreadable-string".padEnd(20)} ${"warning".padEnd(8)} A code string JavaScript would not end where it seems to: not checked.`);
             return 0;
         }
         if (a === "--json")
@@ -84,6 +88,16 @@ function parseArgs(argv) {
             out.info = false;
         else if (a === "--quiet")
             out.quiet = true;
+        else if (a === "--fix")
+            out.fix = true;
+        else if (a === "--fix-brackets")
+            (out.fix = true), (out.fixBrackets = true);
+        else if (a === "--config") {
+            const v = argv[++i];
+            if (!v)
+                return console.error("--config needs a file"), 2;
+            out.config = v;
+        }
         else if (a === "--property") {
             const v = argv[++i];
             if (!v)
@@ -121,7 +135,39 @@ function main(argv = process.argv.slice(2)) {
     const args = parseArgs(argv);
     if (typeof args === "number")
         return args;
-    const project = project_1.Project.load(args.root, { include: args.include, properties: args.properties });
+    let project;
+    try {
+        const config = (0, config_1.loadConfig)(path.resolve(args.root), args.config).config;
+        project = project_1.Project.load(args.root, { include: args.include, properties: args.properties, config });
+    }
+    catch (e) {
+        if (!(e instanceof config_1.ConfigError))
+            throw e;
+        console.error(`config: ${e.message}`);
+        return 2;
+    }
+    if (args.fix) {
+        let fixed = 0;
+        for (const file of project.files) {
+            const before = fs.readFileSync(file, "utf8");
+            const r = (0, fix_1.fixText)(before, project.table, { properties: project.properties, brackets: args.fixBrackets });
+            const rel = path.relative(project.root, file).split(path.sep).join("/");
+            const where = (offset) => {
+                const head = before.slice(0, offset);
+                return `${rel}:${head.split("\n").length}:${offset - head.lastIndexOf("\n")}`;
+            };
+            for (const f of r.fixes)
+                console.error(`fixed  ${where(f.offset)}  ${f.description}`);
+            for (const f of r.skipped)
+                console.error(`left   ${where(f.offset)}  ${f.description}`);
+            if (r.text !== before) {
+                fs.writeFileSync(file, r.text);
+                fixed += r.fixes.length;
+            }
+        }
+        if (fixed)
+            console.error(`${fixed} fix(es) written.\n`);
+    }
     const diagnostics = project.check().filter((d) => d.severity === "error" || (d.severity === "warning" ? args.warnings : args.info));
     const count = (s) => diagnostics.filter((d) => d.severity === s).length;
     const errors = count("error");

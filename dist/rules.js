@@ -7,6 +7,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Rules = void 0;
 exports.checkCode = checkCode;
+exports.declaredSpelling = declaredSpelling;
+exports.unescapedBrackets = unescapedBrackets;
 exports.suggest = suggest;
 exports.distance = distance;
 const names_1 = require("./names");
@@ -155,19 +157,39 @@ function textOf(code, field) {
     }
     return out;
 }
-function textProblems(code, call, field, add) {
+/** The `[`s in a field's text that no escaped `]` closes. */
+function openBrackets(code, field) {
     const open = [];
     for (const { at, ch, escaped } of textOf(code, field)) {
         if (!escaped && ch === "[")
             open.push(at);
         else if (escaped && ch === "]" && open.length)
             open.pop();
-        else if (escaped && /[A-Za-z0-9]/.test(ch)) {
+    }
+    return open;
+}
+/** Every argument whose `]` closes its function while a `[` in its text is open. */
+function unescapedBrackets(code, result) {
+    const out = [];
+    for (const call of (0, parser_1.walk)(result.functions)) {
+        for (const field of call.fields ?? []) {
+            for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field]) {
+                const opens = openBrackets(code, part);
+                if (opens.length && code[part.end] === "]")
+                    out.push({ call, opens, close: part.end });
+            }
+        }
+    }
+    return out;
+}
+function textProblems(code, call, field, add) {
+    for (const { at, ch, escaped } of textOf(code, field)) {
+        if (escaped && /[A-Za-z0-9]/.test(ch)) {
             add("escaped-letter", `\\${ch} inside ${call.name}'s argument is just "${ch}": ForgeScript drops the backslash${ch === "n" ? ". For a new line, use a real line break" : ""}`, at, at + 2);
         }
     }
     // Brackets in text are not counted: a ] meant for a [ in the text closes the function.
-    if (open.length && code[field.end] === "]") {
+    if (openBrackets(code, field).length && code[field.end] === "]") {
         add("unescaped-bracket", `This ] closes ${call.name}, not the [ in its text, so what follows is printed. Escape both as \\[ and \\] (\\\\[ and \\\\] in a JavaScript string)`, field.end, field.end + 1);
     }
 }

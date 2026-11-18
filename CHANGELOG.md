@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- **Renamed to ReForgiParse**, after the repository: package `reforgiparse`, command `npx reforgiparse`, `REFORGIPARSE_CORPUS` for the parity corpus. (0.1.0 to 0.3.1 were called ForgeParse.)
+- **`--fix`**: function names in their declared letter case. Only edits that cannot change the bot: each is checked by parsing the code before and after and kept only if both give the same functions, arguments and errors. Names written with escapes in the file are left alone and reported. Whitespace is never touched, since ForgeScript sends it.
+- **`--fix-brackets`**: escapes a `[` in an argument's text and the `]` that closed the function too early, so ForgeScript prints the text as written. Made only when it removes the problem and adds no compile error.
+- **Config**: `reforgiparse.config.json`, or `"reforgiparse"` in package.json, with `rules`, `include`, `exclude`, `properties` and `known`. JSON, so no code from the config runs. Any mistake in it stops the check with exit code 2 and says what is wrong.
+- **Directives**: `$c[reforgiparse-disable-next-line ...]`, `-disable-line`, `-disable` / `-enable`, also as JavaScript comments; ForgeLint's `forgelint-` directives are read the same way. A misspelt rule in one is reported (`unknown-rule`).
+- Tests: config, directives and fixes on real bots in temporary folders; `--fix` checked against ForgeScript's compiler, `--fix-brackets` and `$c[...]` against its interpreter.
+
 ## 0.3.1
 
 - Every rule's claim is now checked by running its example on ForgeScript's real interpreter (`test/runtime.test.js`), on ForgeScript 2.8.0 and 2.5.0.

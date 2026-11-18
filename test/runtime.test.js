@@ -146,3 +146,9 @@ test("compile errors: ForgeScript refuses the code with the message ReForgiParse
         assert.ok(theirs && theirs.includes(f.message.split(". Usage")[0]), `${code}: ${theirs}`)
     }
 })
+
+test("directives: $c[reforgiparse-...] prints nothing, wherever it is", async () => {
+    for (const code of ["[$c[reforgiparse-disable-next-line unknown-function]]", "[$c[reforgiparse-disable]]", "a$c[reforgiparse-disable-line glued-name]b"]) {
+        assert.equal((await run(code)).output, code.startsWith("[") ? "[]" : "ab", code)
+    }
+})

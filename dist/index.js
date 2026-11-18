@@ -22,4 +22,7 @@ __exportStar(require("./extract"), exports);
 __exportStar(require("./project"), exports);
 __exportStar(require("./rules"), exports);
 __exportStar(require("./values"), exports);
+__exportStar(require("./fix"), exports);
+__exportStar(require("./config"), exports);
+__exportStar(require("./directives"), exports);
 //# sourceMappingURL=index.js.map

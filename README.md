@@ -27,25 +27,28 @@ $sendMesage[$channelID;Done]`
 it says:
 
 ```
-commands/shop.js:5:20  error    $addButton: "style" must be Primary (letter case matters), not "primary". ForgeScript stops the command with "invalid argument"  [invalid-argument]
+commands/shop.js:5:20  error    $addButton: "style" must be Primary (letter case matters), not "primary". ForgeScript stops the command: "Given value primary for argument style is not of type Enum"  [invalid-argument]
 commands/shop.js:7:8  warning  $color: "blue" is not a colour name, so it is read as hexadecimal up to its first non-hex letter: #00000b. Write Blue  [color-value]
 commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScript prints it as text. Did you mean $sendMessage?  [unknown-function]
 
 1 error(s), 2 warning(s) in 1 file(s) under . (functions: @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0)
 ```
 
-> **Status: 0.3.1.** Checks and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: a formatter, a config file with comments to turn rules off, and editor support. The API may change before 1.0.
+> **Status: 0.4.0.** Checks, fixes and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: editor support. The API may change before 1.0.
 
 ## Contents
 
 1. [Why ReForgiParse](#why-reforgiparse)
 2. [Checking a bot](#checking-a-bot)
 3. [Rules](#rules)
-4. [In CI](#in-ci)
-5. [Using the parser](#using-the-parser)
-6. [How it is tested](#how-it-is-tested)
-7. [Compared with ForgeLint](#compared-with-forgelint)
-8. [Licence](#licence)
+4. [Fixing](#fixing)
+5. [Config](#config)
+6. [Turning rules off in code](#turning-rules-off-in-code)
+7. [In CI](#in-ci)
+8. [Using the parser](#using-the-parser)
+9. [How it is tested](#how-it-is-tested)
+10. [Compared with ForgeLint](#compared-with-forgelint)
+11. [Licence](#licence)
 
 ## Why ReForgiParse
 
@@ -70,12 +73,15 @@ npx reforgiparse --rules               # what each rule checks
 | Option | |
 |---|---|
 | `--format text\|json\|github` | Output: text (default), JSON, or GitHub Actions annotations. `--json` is `--format json`. |
+| `--fix` | Fix what cannot change the bot, then check. See [Fixing](#fixing). |
+| `--fix-brackets` | Also escape brackets that close a function too early. This changes what the bot sends, on purpose. |
+| `--config <file>` | Use this config. Default: `reforgiparse.config.json`, or `"reforgiparse"` in `package.json`. |
 | `--no-warnings` | Errors only. |
 | `--no-info` | Leave out the spelling hints. |
 | `--quiet` | Print nothing when all is well. |
 | `--property <name>` | Also read this property as code (besides `code`). |
 
-The exit code is 1 when there are errors.
+The exit code is 1 when there are errors, and 2 for a wrong option or a config that cannot be used.
 
 **What it reads**
 
@@ -95,8 +101,8 @@ Each rule is backed by ForgeScript's source (2.8.0) or by running its own resolv
 | `missing-brackets` | `$get` | Refuses to compile the code. |
 | `too-many-arguments` | `$get[a;b]` | Refuses to compile the code. |
 | `unclosed-bracket` | `$get[a` | Refuses to compile the code. |
-| `too-few-arguments` | `$addField[Coins]` | Stops the command: "missing argument". |
-| `invalid-argument` | `$round[abc]`, `$addButton[id;Hi;primary]`, `$wait[1.5h]` | Stops the command: "invalid argument". |
+| `too-few-arguments` | `$addField[Coins]` | Stops the command: "Function $addField is missing argument value". |
+| `invalid-argument` | `$round[abc]`, `$addButton[id;Hi;primary]`, `$wait[1.5h]` | Stops the command: "Given value abc for argument number is not of type Number". |
 | `unknown-event` | `type: "messageCreat"` | Never runs the command. |
 
 **Warnings**: the code runs, but not as written.
@@ -116,6 +122,7 @@ Each rule is backed by ForgeScript's source (2.8.0) or by running its own resolv
 | `wrong-store` | `$arrayCreate[list;3]$get[list]` | `$get` reads `$let` variables; arrays and JSON live where `$env` reads. |
 | `deprecated` | `$createGuild[...]` | Marked deprecated by its package. |
 | `unreadable-string` | a `code:` string that does not end where JavaScript would | Not checked. |
+| `unknown-rule` | `$c[reforgiparse-disable-line glued-nme]` | A misspelt rule in a directive: it turns nothing off. |
 
 **Info**: hints.
 
@@ -124,6 +131,73 @@ Each rule is backed by ForgeScript's source (2.8.0) or by running its own resolv
 | `hidden-output` | `$let[ok;$pauseTrack]`, never read | `$!pauseTrack` hides the output without a variable. |
 | `escaped-letter` | `$description[a\nb]` | Inside an argument `\n` is just `n`. |
 | `function-case` | `$AUTHORID` | Works; the declared spelling is `$authorID`. |
+
+## Fixing
+
+```bash
+npx reforgiparse --fix            # fixes what cannot change the bot, then checks
+npx reforgiparse --fix-brackets   # also escapes brackets that close a function too early
+```
+
+**`--fix` only makes edits that cannot change what the bot does.** Today that is the letter case of function names (`$AUTHORID` becomes `$authorID`). Each edit is checked by parsing the code before and after, with the same result as ForgeScript's compiler, and kept only if both give the same functions, arguments and errors. A name written with an escape in the file is left alone and reported.
+
+**`--fix-brackets` changes what the bot sends, on purpose.** In `$description[[Docs](https://x.y)]` the first `]` closes `$description` and `(https://x.y)]` is printed after it. The fix escapes the `[` and that `]`, giving `$description[\[Docs\](https://x.y)]` (written `\\[` and `\\]` in a JavaScript string), so ForgeScript prints `[Docs](https://x.y)`. It is only made when it removes the problem and adds no compile error; otherwise it is reported and left alone.
+
+**ReForgiParse does not re-indent code.** In ForgeScript, whitespace inside an argument or in the text around functions is part of what the bot sends. This prints four spaces before the name:
+
+```
+$if[1==1;
+    $username
+]
+```
+
+ForgeScript only trims the two ends of a message, so changing indentation can change a bot's messages. ReForgiParse leaves it as written.
+
+## Config
+
+`reforgiparse.config.json` in the bot's folder, or a `"reforgiparse"` key in its `package.json`. It is JSON, so checking a bot never runs code from its config. Every option is optional; a list option also takes a single string.
+
+```json
+{
+    "rules": { "function-case": "off", "glued-name": "error" },
+    "exclude": ["tests"],
+    "known": ["$priceOfTheDay"]
+}
+```
+
+| Option | |
+|---|---|
+| `rules` | `"error"`, `"warning"`, `"info"` or `"off"` for any rule (`npx reforgiparse --rules` lists them). |
+| `include` | Files and folders to check, from the bot's folder. Default: all of it. |
+| `exclude` | File or folder names to skip anywhere (`"tests"`), or paths from the bot's folder (`"src/legacy"`). |
+| `properties` | Properties whose strings are ForgeScript code. Default: `["code"]`. |
+| `known` | Functions made when the bot runs, which no file defines: never reported as unknown. |
+
+A config that cannot be used is an error, never a silent default: an unknown option, a misspelt rule (with the closest name), or a wrong level stops the check with exit code 2.
+
+## Turning rules off in code
+
+In ForgeScript, with `$c[...]`, which prints nothing:
+
+```
+$c[reforgiparse-disable-next-line unknown-function]
+$madeAtRuntime
+
+$pingms $c[reforgiparse-disable-line glued-name]
+
+$c[reforgiparse-disable]
+... every rule off until ...
+$c[reforgiparse-enable]
+```
+
+or as a JavaScript comment in the file, for the line after it or the line it is on:
+
+```js
+// reforgiparse-disable-next-line invalid-argument
+module.exports = { name: "x", type: "messageCreate", code: "$round[abc]" }
+```
+
+Without rule names, a directive covers every rule; separate several with spaces or commas. A misspelt rule name is reported (`unknown-rule`), since it would turn nothing off. `forgelint-` directives are honoured too, so a bot moving from ForgeLint keeps the ones it has.
 
 ## In CI
 
@@ -160,6 +234,8 @@ Project.load("./mybot").check()                                // the rules on a
 | `checkCode(code, table, { values })` | `{ rule, severity, message, start, end }[]`. Pass a `ValueChecker` to check argument values. |
 | `Project.load(folder).check()` | `{ file, line, column, endLine, endColumn, severity, rule, message }[]`. |
 | `extractCode(text)` | The `code:` strings of a JavaScript or TypeScript file, as ForgeScript receives them, with each character's offset in the file. |
+| `fixText(text, table, { brackets })` | `{ text, fixes, skipped }`: the file with the fixes made, what was fixed, and what was left alone and why. |
+| `loadConfig(folder)`, `directivesIn(text)`, `isSuppressed(...)` | The config and the directives, for tools of your own. |
 | `FunctionTable` | `fromForgeScript()`, `fromMetadata(...lists)`, or `new FunctionTable(raw)`. |
 | `nameIssues`, `render`, `walk`, `usage`, `suggest` | Helpers. |
 
@@ -167,7 +243,7 @@ Offsets are UTF-16 indexes, like JavaScript string indexes.
 
 ## How it is tested
 
-`npm test` (44 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
+`npm test` (51 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
 
 **ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ReForgiParse. `npm run parity` runs that diff; `REFORGIPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -179,12 +255,13 @@ What `npm test` checks:
 - **Every rule**, on code that has the problem and code that does not, with ForgeScript's resolvers deciding.
 - **Every rule's claim, on ForgeScript's interpreter**: each rule's example is run offline on ForgeScript's real interpreter, and ForgeScript must do what the message says. Where a message quotes ForgeScript's error, ForgeScript must log exactly that text.
 - **A whole bot**: an exact list of findings at their lines and columns; the command line's text, JSON and GitHub output and exit codes; an extension without metadata.
+- **Config, directives and fixes**, on real bots in temporary folders: levels, `off`, `known`, `exclude`, the `package.json` key, and an error for each kind of config mistake; every directive, ForgeLint's included. `--fix` must leave what ForgeScript's own compiler makes of the code unchanged; after `--fix-brackets`, ForgeScript's interpreter must print the text as written.
 
 Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx reforgiparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings.
 
 ## Compared with ForgeLint
 
-[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript, and does things ReForgiParse does not yet: a formatter with `--fix`, a config file, comments that turn rules off, and a stray-bracket rule. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ReForgiParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ReForgiParse knows it, and that its brackets get printed.
+[ForgeLint](https://github.com/Daaisukidayo/ForgeLint) 1.1.0 is the other checker for ForgeScript. Both have a config, comments that turn rules off (ReForgiParse reads ForgeLint's too), a letter-case fix and a bracket fix. ForgeLint also re-indents code and has a stray-bracket rule; ReForgiParse leaves indentation alone on purpose (see [Fixing](#fixing)), and its config is JSON rather than JavaScript. On the same 14 deliberate mistakes (the examples in [Rules](#rules)), ForgeLint reported 7 and ReForgiParse 15; ForgeLint missed both colour mistakes, the `http://` link, the `1.5h` duration, `&&` and a missing operator in conditions, the misordered `$#!`, and `$get` of an array. On a small bot, ForgeLint reported a custom function without `params` as unknown; ReForgiParse knows it, and that its brackets get printed.
 
 ReForgiParse is written from scratch and shares no code with ForgeLint.
 

@@ -143,7 +143,7 @@ function literal(field: AnyField): string | null {
 }
 
 /** The spelling the function or alias is declared with, when the written one differs only in case. */
-function declaredSpelling(call: Call): string | null {
+export function declaredSpelling(call: Call): string | null {
     const written = call.written.slice(1)
     for (const name of [call.fn.name, ...(call.fn.aliases ?? [])]) {
         const bare = name.replace(/^\$/, "")
@@ -174,17 +174,45 @@ function textOf(code: string, field: Field): Array<{ at: number; ch: string; esc
     return out
 }
 
-function textProblems(code: string, call: Call, field: Field, add: Add) {
+/** The `[`s in a field's text that no escaped `]` closes. */
+function openBrackets(code: string, field: Field): number[] {
     const open: number[] = []
     for (const { at, ch, escaped } of textOf(code, field)) {
         if (!escaped && ch === "[") open.push(at)
         else if (escaped && ch === "]" && open.length) open.pop()
-        else if (escaped && /[A-Za-z0-9]/.test(ch)) {
+    }
+    return open
+}
+
+/** A `]` that closes its function while a `[` in the argument's text is still open: the `[`s and the `]`. */
+export interface UnescapedBracket {
+    call: Call
+    opens: number[]
+    close: number
+}
+
+/** Every argument whose `]` closes its function while a `[` in its text is open. */
+export function unescapedBrackets(code: string, result: ParseResult): UnescapedBracket[] {
+    const out: UnescapedBracket[] = []
+    for (const call of walk(result.functions)) {
+        for (const field of call.fields ?? []) {
+            for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field]) {
+                const opens = openBrackets(code, part)
+                if (opens.length && code[part.end] === "]") out.push({ call, opens, close: part.end })
+            }
+        }
+    }
+    return out
+}
+
+function textProblems(code: string, call: Call, field: Field, add: Add) {
+    for (const { at, ch, escaped } of textOf(code, field)) {
+        if (escaped && /[A-Za-z0-9]/.test(ch)) {
             add("escaped-letter", `\\${ch} inside ${call.name}'s argument is just "${ch}": ForgeScript drops the backslash${ch === "n" ? ". For a new line, use a real line break" : ""}`, at, at + 2)
         }
     }
     // Brackets in text are not counted: a ] meant for a [ in the text closes the function.
-    if (open.length && code[field.end] === "]") {
+    if (openBrackets(code, field).length && code[field.end] === "]") {
         add("unescaped-bracket", `This ] closes ${call.name}, not the [ in its text, so what follows is printed. Escape both as \\[ and \\] (\\\\[ and \\\\] in a JavaScript string)`, field.end, field.end + 1)
     }
 }

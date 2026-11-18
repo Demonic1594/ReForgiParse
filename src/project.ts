@@ -6,7 +6,9 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { CodeSource, cook, DYNAMIC, extractCode, fileOffset, lineColumn } from "./extract"
-import { checkCode, distance, Severity } from "./rules"
+import { Config, ConfigError, Level, loadConfig } from "./config"
+import { directivesIn, isSuppressed } from "./directives"
+import { checkCode, distance, Rules, Severity } from "./rules"
 import { ValueChecker } from "./values"
 import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, paramFromNative, storesOf, withParams } from "./table"
 
@@ -21,7 +23,7 @@ export interface Diagnostic {
     endLine: number
     endColumn: number
     severity: Severity
-    /** A rule of {@link Rules}, or `unknown-event` or `unreadable-string`. */
+    /** A rule of {@link Rules}, or one of {@link ProjectRules}. */
     rule: string
     message: string
 }
@@ -34,11 +36,20 @@ export interface FunctionSource {
     functions: number
 }
 
+/** Rules that need the whole file, not only the code: what they find and their default level. */
+export const ProjectRules = {
+    "unknown-event": { severity: "error", description: "A command's `type` that no loaded package has as an event: the command never runs." },
+    "unreadable-string": { severity: "warning", description: "A `code:` string JavaScript would not end where it seems to: it is not checked." },
+    "unknown-rule": { severity: "warning", description: "A `reforgiparse-disable` comment that names no rule: it turns nothing off." },
+} as const
+
 export interface ProjectOptions {
-    /** Properties whose string values are ForgeScript code (default `["code"]`). */
+    /** Properties whose string values are ForgeScript code (default: the config's, else `["code"]`). */
     properties?: string[]
-    /** Folders or files to check, relative to the root (default: the whole root). */
+    /** Folders or files to check, relative to the root (default: the config's, else the whole root). */
     include?: string[]
+    /** The config to use. Default: the bot's own (`reforgiparse.config.json` or package.json). Pass `{}` for none. */
+    config?: Config
 }
 
 /** Extensions of files that are read. */
@@ -69,7 +80,8 @@ export class Project {
     private constructor(
         readonly root: string,
         readonly files: string[],
-        private readonly properties: string[],
+        readonly properties: string[],
+        readonly config: Config,
         loaded: { table: FunctionTable; sources: FunctionSource[]; custom: CustomFunction[]; notes: string[]; events: Set<string> | null; values: ValueChecker },
     ) {
         this.values = loaded.values
@@ -83,8 +95,17 @@ export class Project {
     /** Reads a bot's folder: its `package.json`, installed packages and code files. */
     static load(root: string, options: ProjectOptions = {}): Project {
         root = path.resolve(root)
-        const properties = options.properties?.length ? options.properties : ["code"]
-        const files = (options.include?.length ? options.include : ["."]).flatMap((p) => listFiles(root, path.resolve(root, p)))
+        const config = options.config ?? loadConfig(root).config
+        for (const rule of Object.keys(config.rules ?? {})) {
+            if (!(rule in Rules) && !(rule in ProjectRules)) {
+                const guess = closest(rule, [...Object.keys(Rules), ...Object.keys(ProjectRules)])
+                throw new ConfigError("config", `"rules" names "${rule}", which is not a rule${guess ? ` (did you mean "${guess}"?)` : ""}. See reforgiparse --rules`)
+            }
+        }
+        const properties = options.properties?.length ? options.properties : config.properties?.length ? config.properties : ["code"]
+        const exclude = config.exclude ?? []
+        const include = options.include?.length ? options.include : config.include?.length ? config.include : ["."]
+        const files = include.flatMap((p) => listFiles(root, path.resolve(root, p), exclude))
         const notes: string[] = []
         const sources: FunctionSource[] = []
         const raw: IRawFunction[] = []
@@ -150,7 +171,7 @@ export class Project {
 
         // Custom functions are added last, and replace a function of the same name, as FunctionManager.add does.
         // Read from the whole bot, even when only some files are checked: they call functions defined elsewhere.
-        const everyFile = options.include?.length ? listFiles(root, root) : files
+        const everyFile = include.length === 1 && include[0] === "." ? files : listFiles(root, root, exclude)
         const custom = everyFile.flatMap((f) => customFunctions(root, f, properties))
         for (const c of custom) {
             const fn = customAsRaw(c)
@@ -159,6 +180,12 @@ export class Project {
             else raw.push(fn)
         }
         if (custom.length) sources.push({ name: "custom", version: null, functions: custom.length })
+        // Names the config says exist (made when the bot runs): any arguments, and unknown use of variables.
+        for (const k of config.known ?? []) {
+            const name = k.startsWith("$") ? k : `$${k}`
+            if (!raw.some((x) => x.name.toLowerCase() === name.toLowerCase())) raw.push({ name, aliases: null, args: { required: false, fields: [{ rest: true }] }, package: "known" })
+        }
+        if (config.known?.length) sources.push({ name: "known (config)", version: null, functions: config.known.length })
         let discord: any = null
         try {
             discord = forgeDir ? require(require.resolve("discord.js", { paths: [forgeDir] })) : null
@@ -166,7 +193,7 @@ export class Project {
             // Colour names are then not known: only hex and numbers are taken as colours.
         }
         const values = new ValueChecker(forgescript, discord)
-        return new Project(root, files, properties, { table: new FunctionTable(raw), sources, custom, notes, events, values })
+        return new Project(root, files, properties, config, { table: new FunctionTable(raw), sources, custom, notes, events, values })
     }
 
     /** Checks every file. */
@@ -179,9 +206,27 @@ export class Project {
         const abs = path.resolve(this.root, file)
         const text = fs.readFileSync(abs, "utf8")
         const rel = path.relative(this.root, abs).split(path.sep).join("/")
-        const out: Diagnostic[] = []
+        const found: Diagnostic[] = []
         const objects = objectLiterals(text)
-        for (const src of extractCode(text, this.properties)) out.push(...this.checkSource(text, rel, src, objects))
+        for (const src of extractCode(text, this.properties)) found.push(...this.checkSource(text, rel, src, objects))
+
+        // Comments that turn rules off; one that names no rule is reported (forgelint- ones may name ForgeLint's rules).
+        const directives = directivesIn(text)
+        for (const d of directives) {
+            if (d.prefix !== "reforgiparse") continue
+            for (const rule of d.rules) {
+                if (rule in Rules || rule in ProjectRules) continue
+                const guess = closest(rule, [...Object.keys(Rules), ...Object.keys(ProjectRules)])
+                found.push({ file: rel, line: d.line, column: d.column, endLine: d.line, endColumn: d.column + 1, severity: "warning", rule: "unknown-rule", message: `reforgiparse-${d.kind} names "${rule}", which is not a rule, so it turns nothing off${guess ? `. Did you mean "${guess}"?` : ""}` })
+            }
+        }
+        const levels = this.config.rules ?? {}
+        const out: Diagnostic[] = []
+        for (const d of found) {
+            const level: Level | undefined = levels[d.rule]
+            if (level === "off" || isSuppressed(directives, d.line, d.rule)) continue
+            out.push(level ? { ...d, severity: level } : d)
+        }
         return out.sort((a, b) => a.line - b.line || a.column - b.column)
     }
 
@@ -355,7 +400,7 @@ function forgeScriptEvents(forgeDir: string): string[] | null {
     return out
 }
 
-function closest(word: string, names: Iterable<string>): string | null {
+export function closest(word: string, names: Iterable<string>): string | null {
     let best: string | null = null
     let bestD = Infinity
     for (const n of names) {
@@ -366,14 +411,18 @@ function closest(word: string, names: Iterable<string>): string | null {
 }
 
 
-function listFiles(root: string, start: string): string[] {
+function listFiles(root: string, start: string, exclude: readonly string[] = []): string[] {
     if (!fs.existsSync(start)) return []
-    if (fs.statSync(start).isFile()) return CODE_FILE.test(start) && !start.endsWith(".d.ts") ? [start] : []
+    const rel = (p: string) => path.relative(root, p).split(path.sep).join("/")
+    const clean = (x: string) => x.replace(/^\.\//, "").replace(/\/$/, "")
+    const excluded = (p: string, name: string) => exclude.some((x) => x === name || clean(x) === rel(p))
+    if (fs.statSync(start).isFile()) return CODE_FILE.test(start) && !start.endsWith(".d.ts") && !excluded(start, path.basename(start)) ? [start] : []
     const out: string[] = []
     const visit = (dir: string) => {
         for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
             if (e.name === "node_modules" || e.name.startsWith(".")) continue
             const p = path.join(dir, e.name)
+            if (excluded(p, e.name)) continue
             if (e.isDirectory()) {
                 if (dir === root && SKIP_AT_TOP.has(e.name)) continue
                 visit(p)
