@@ -3,7 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.nameIssues = nameIssues;
 // SPDX-License-Identifier: LGPL-3.0-or-later
 const parser_1 = require("./parser");
-const TOKEN = /\$(?:!)?(?:#)?(?:@\[.*?\])?([A-Za-z0-9_]+)/g;
+// A name starts with a letter or `_`: `$5` is a price, not a misspelt function.
+const TOKEN = /\$(?:!)?(?:#)?(?:@\[.*?\])?([A-Za-z_][A-Za-z0-9_]*)/g;
 /**
  * The `$words` ForgeScript does not treat as written. It uses the compiler's own matching, so it
  * agrees with what runs; escaped `\$words` are skipped.

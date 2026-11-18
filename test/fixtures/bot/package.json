@@ -1,0 +1,1 @@
+{ "name": "fixture-bot", "private": true, "dependencies": { "@tryforge/forgescript": "2.8.0" } }

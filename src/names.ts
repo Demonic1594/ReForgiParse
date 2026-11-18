@@ -20,7 +20,8 @@ export interface NameIssue {
     rest: string
 }
 
-const TOKEN = /\$(?:!)?(?:#)?(?:@\[.*?\])?([A-Za-z0-9_]+)/g
+// A name starts with a letter or `_`: `$5` is a price, not a misspelt function.
+const TOKEN = /\$(?:!)?(?:#)?(?:@\[.*?\])?([A-Za-z_][A-Za-z0-9_]*)/g
 
 /**
  * The `$words` ForgeScript does not treat as written. It uses the compiler's own matching, so it
