@@ -6,8 +6,9 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { CodeSource, cook, DYNAMIC, extractCode, fileOffset, lineColumn } from "./extract"
-import { checkCode, Severity } from "./rules"
-import { FunctionTable, fromMetadata, IFunctionMetadata, IRawFunction, withParams } from "./table"
+import { checkCode, distance, Severity } from "./rules"
+import { ValueChecker } from "./values"
+import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, paramFromNative, storesOf, withParams } from "./table"
 
 /** One problem, at a place in a file. */
 export interface Diagnostic {
@@ -60,6 +61,8 @@ export class Project {
     readonly customFunctions: CustomFunction[]
     /** What could not be read; shown, never fatal. */
     readonly notes: string[]
+    /** Checks literal argument values with the bot's ForgeScript. */
+    readonly values: ValueChecker
     /** Event names a command's `type` can be, `null` when ForgeScript's could not be read. */
     readonly events: Set<string> | null
 
@@ -67,8 +70,9 @@ export class Project {
         readonly root: string,
         readonly files: string[],
         private readonly properties: string[],
-        loaded: { table: FunctionTable; sources: FunctionSource[]; custom: CustomFunction[]; notes: string[]; events: Set<string> | null },
+        loaded: { table: FunctionTable; sources: FunctionSource[]; custom: CustomFunction[]; notes: string[]; events: Set<string> | null; values: ValueChecker },
     ) {
+        this.values = loaded.values
         this.events = loaded.events
         this.table = loaded.table
         this.sources = loaded.sources
@@ -98,6 +102,17 @@ export class Project {
             sources.push({ ...source, functions: n })
         }
 
+        const forgeDir = packageDir(root, "@tryforge/forgescript")
+        let forgescript: any = null
+        if (forgeDir) {
+            try {
+                forgescript = require(forgeDir)
+            } catch (e) {
+                notes.push(`cannot load @tryforge/forgescript (${(e as Error).message})`)
+            }
+        } else notes.push("@tryforge/forgescript is not installed here: every function name is unknown (run npm install)")
+        const tag = (fns: IRawFunction[], pkg: string) => fns.map((f) => ({ ...f, package: f.package ?? pkg }))
+
         // As in a bot: the extensions' functions first, then ForgeScript's own, which skips names already taken.
         for (const dep of dependencies(root)) {
             if (dep === "@tryforge/forgescript") continue
@@ -106,10 +121,10 @@ export class Project {
             const meta = path.join(dir, "metadata", "functions.json")
             if (!fs.existsSync(meta)) {
                 // No metadata (the official extensions on npm): read its NativeFunction files instead.
-                const natives = readNatives(dir)
+                const natives = readNatives(dir, forgescript?.ArgType)
                 extensionEvents.push(...natives.events)
                 for (const f of natives.failures) notes.push(`${dep}: ${f}`)
-                if (natives.functions.length) add(natives.functions, { name: dep, version: version(dir), functions: 0 })
+                if (natives.functions.length) add(tag(natives.functions, dep), { name: dep, version: version(dir), functions: 0 })
                 else notes.push(`${dep} has no metadata/functions.json and no readable NativeFunction files: its functions are unknown`)
                 continue
             }
@@ -117,23 +132,21 @@ export class Project {
             if (Array.isArray(ev)) extensionEvents.push(...ev.map((e: { name?: string } | string) => (typeof e === "string" ? e : e.name ?? "")))
             try {
                 const list = JSON.parse(fs.readFileSync(meta, "utf8")) as IFunctionMetadata[]
-                add(list.map(fromMetadata), { name: dep, version: version(dir), functions: 0 })
+                add(tag(list.map(fromMetadata), dep), { name: dep, version: version(dir), functions: 0 })
             } catch (e) {
                 notes.push(`${dep}: cannot read metadata/functions.json (${(e as Error).message})`)
             }
         }
-        const forgeDir = packageDir(root, "@tryforge/forgescript")
-        if (forgeDir) {
+        if (forgescript) {
             try {
-                const forgescript = require(forgeDir)
                 forgescript.FunctionManager.loadNative()
-                add(withParams(forgescript), { name: "@tryforge/forgescript", version: version(forgeDir), functions: 0 })
-                const native = forgeScriptEvents(forgeDir)
+                add(withParams(forgescript), { name: "@tryforge/forgescript", version: version(forgeDir!), functions: 0 })
+                const native = forgeScriptEvents(forgeDir!)
                 if (native) events = new Set([...native, ...extensionEvents])
             } catch (e) {
-                notes.push(`cannot load @tryforge/forgescript (${(e as Error).message})`)
+                notes.push(`cannot read ForgeScript's functions (${(e as Error).message})`)
             }
-        } else notes.push("@tryforge/forgescript is not installed here: every function name is unknown (run npm install)")
+        }
 
         // Custom functions are added last, and replace a function of the same name, as FunctionManager.add does.
         // Read from the whole bot, even when only some files are checked: they call functions defined elsewhere.
@@ -146,7 +159,14 @@ export class Project {
             else raw.push(fn)
         }
         if (custom.length) sources.push({ name: "custom", version: null, functions: custom.length })
-        return new Project(root, files, properties, { table: new FunctionTable(raw), sources, custom, notes, events })
+        let discord: any = null
+        try {
+            discord = forgeDir ? require(require.resolve("discord.js", { paths: [forgeDir] })) : null
+        } catch {
+            // Colour names are then not known: only hex and numbers are taken as colours.
+        }
+        const values = new ValueChecker(forgescript, discord)
+        return new Project(root, files, properties, { table: new FunctionTable(raw), sources, custom, notes, events, values })
     }
 
     /** Checks every file. */
@@ -172,19 +192,21 @@ export class Project {
             const b = lineColumn(text, end > start ? fileOffset(src, end - 1) + 1 : fileOffset(src, start))
             out.push({ file, line: a.line, column: a.column, endLine: b.line, endColumn: b.column, severity, rule, message })
         }
+        const obj = objects.filter((o) => o.start < src.start && src.end <= o.end).pop()
         if (src.error) {
             const a = lineColumn(text, src.start)
             out.push({ file, line: a.line, column: a.column, endLine: a.line, endColumn: a.column + 1, severity: "warning", rule: "unreadable-string", message: `This ${src.property}: string cannot be read to its end (${src.error}), so it was not checked` })
             return out
         }
-        for (const f of checkCode(src.value, this.table)) {
+        // The body of a custom function ({ name, params, code }, or any object in a functions folder) can read the caller's variables.
+        const custom = !!obj && (obj.props.has("params") || (file.split("/").slice(0, -1).includes("functions") && obj.props.has("name")))
+        for (const f of checkCode(src.value, this.table, { values: this.values, customFunction: custom })) {
             // A name right before a ${...} may be completed when the bot runs.
             if ((f.rule === "unknown-function" || f.rule === "glued-name") && src.value[f.end] === DYNAMIC) continue
             at(f.start, f.end, f.severity, f.rule, f.message)
         }
 
         // The command's type, in the same object as its code. Application commands (with `data`) are skipped.
-        const obj = objects.filter((o) => o.start < src.start && src.end <= o.end).pop()
         const type = obj?.props.get("type")
         if (this.events && obj && type && !obj.props.has("data") && !type.dynamic && !type.error && !this.events.has(type.value)) {
             const a = lineColumn(text, type.start)
@@ -264,7 +286,7 @@ function objectLiterals(text: string): ObjectLiteral[] {
  * The functions and event names an extension defines in code: its `NativeFunction` files and event
  * handlers, loaded without starting the extension. Only files that mention them are loaded.
  */
-export function readNatives(dir: string): { functions: IRawFunction[]; events: string[]; failures: string[] } {
+export function readNatives(dir: string, argType?: Record<number, string>): { functions: IRawFunction[]; events: string[]; failures: string[] } {
     const functions: IRawFunction[] = []
     const events: string[] = []
     const failures: string[] = []
@@ -299,14 +321,15 @@ export function readNatives(dir: string): { functions: IRawFunction[]; events: s
             if (native && data && typeof data.name === "string" && data.name.startsWith("$")) {
                 if (seen.has(data.name)) continue
                 seen.add(data.name)
-                const args: Array<{ name: string; required?: boolean; rest?: boolean; condition?: boolean }> = data.args ?? []
+                const args: INativeArg[] = data.args ?? []
                 functions.push({
                     name: data.name,
                     aliases: data.aliases ?? null,
                     args: data.brackets === undefined ? null : { required: data.brackets, fields: args.map((a) => ({ condition: !!a.condition, rest: !!a.rest })) },
-                    params: args.map((a) => ({ name: a.name, required: !!a.required, rest: !!a.rest })),
+                    params: args.map((a) => paramFromNative(a, argType)),
                     unwrap: !!data.unwrap && args.length > 0,
                     deprecated: !!data.deprecated,
+                    stores: storesOf(p),
                 })
             } else if (handler && item && typeof item.name === "string" && typeof item.register === "function") events.push(item.name)
         }
@@ -336,25 +359,12 @@ function closest(word: string, names: Iterable<string>): string | null {
     let best: string | null = null
     let bestD = Infinity
     for (const n of names) {
-        const d = editDistance(word.toLowerCase(), n.toLowerCase())
+        const d = distance(word.toLowerCase(), n.toLowerCase())
         if (d < bestD) (bestD = d), (best = n)
     }
     return bestD <= Math.max(1, Math.floor(word.length / 4)) ? best : null
 }
 
-function editDistance(a: string, b: string): number {
-    const dp = Array.from({ length: b.length + 1 }, (_, j) => j)
-    for (let i = 1; i <= a.length; i++) {
-        let prev = dp[0]
-        dp[0] = i
-        for (let j = 1; j <= b.length; j++) {
-            const tmp = dp[j]
-            dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1))
-            prev = tmp
-        }
-    }
-    return dp[b.length]
-}
 
 function listFiles(root: string, start: string): string[] {
     if (!fs.existsSync(start)) return []
@@ -466,5 +476,6 @@ export function customAsRaw(c: Pick<CustomFunction, "name" | "params" | "bracket
                   },
         params: c.params.map((p) => (typeof p === "string" ? { name: p, required: true, rest: false } : { name: p.name, required: p.required ?? true, rest: !!p.rest })),
         unwrap: c.params.length > 0 && !c.firstParamCondition,
+        package: "custom",
     }
 }

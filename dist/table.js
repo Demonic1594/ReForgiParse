@@ -7,6 +7,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FunctionTable = void 0;
 exports.fromMetadata = fromMetadata;
+exports.storesOf = storesOf;
+exports.paramFromNative = paramFromNative;
 exports.withParams = withParams;
 exports.usage = usage;
 /** Escapes a name the way ForgeScript does before joining names into one regular expression. */
@@ -79,16 +81,49 @@ function fromMetadata(m) {
         args: m.brackets === undefined || m.brackets === null
             ? null
             : { required: m.brackets, fields: (m.args ?? []).map((a) => ({ condition: !!a.condition, rest: !!a.rest })) },
-        params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest })),
+        params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest, type: a.type, enum: Array.isArray(a.enum) ? a.enum : undefined })),
         unwrap: !!m.unwrap,
         deprecated: !!m.deprecated,
     };
 }
+/** What a function's compiled source does with `$let` variables and the environment store. */
+function storesOf(file) {
+    if (!file)
+        return undefined;
+    let text;
+    try {
+        text = require("node:fs").readFileSync(file, "utf8");
+    }
+    catch {
+        return undefined;
+    }
+    return {
+        setsVariable: /\.setKeyword\(/.test(text),
+        readsVariable: /\.(getKeyword|hasKeyword|deleteKeyword)\(/.test(text),
+        setsEnvironment: /\.setEnvironmentKey\(/.test(text),
+    };
+}
+/** A NativeFunction's argument, described by name. */
+function paramFromNative(a, argType) {
+    const type = typeof a.type === "number" ? argType?.[a.type] : a.type;
+    const values = a.enum && typeof a.enum === "object" ? Object.keys(a.enum).filter((k) => Number.isNaN(Number(k))) : undefined;
+    return { name: a.name, required: !!a.required, rest: !!a.rest, type, enum: values };
+}
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */
 function withParams(forgescript) {
     return forgescript.FunctionManager.raw.map((f) => {
-        const data = forgescript.FunctionManager.get?.(f.name)?.data;
-        return data ? { ...f, params: (data.args ?? []).map((a) => ({ name: a.name, required: !!a.required, rest: !!a.rest })), unwrap: !!data.unwrap, deprecated: !!data.deprecated } : f;
+        const native = forgescript.FunctionManager.get?.(f.name);
+        const data = native?.data;
+        if (!data)
+            return { ...f, package: "@tryforge/forgescript" };
+        return {
+            ...f,
+            params: (data.args ?? []).map((a) => paramFromNative(a, forgescript.ArgType)),
+            unwrap: !!data.unwrap,
+            deprecated: !!data.deprecated,
+            package: "@tryforge/forgescript",
+            stores: storesOf(native.path),
+        };
     });
 }
 /** How a function is written with its arguments: `$sendMessage[channel ID;content?;return message ID?]`. */

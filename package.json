@@ -1,6 +1,6 @@
 {
   "name": "forgeparse",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Checks ForgeScript bots the way ForgeScript compiles them: a parser with the same tree and errors as ForgeScript's own compiler, source positions, error recovery, and a command-line check of a whole bot.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

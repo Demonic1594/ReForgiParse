@@ -52,8 +52,33 @@ function fuzz(table, n, seed) {
         "a", "text", " ", "1", "-5", "0.5", "\n", "\r\n", "😀", "é", "`", "${x}",
         "[SYSTEM_FUNCTION(0)]", "\\[SYSTEM_FUNCTION(1)]",
     ]
+    // Well-formed code: calls with as many arguments as they take, nested, with text and escapes
+    // between them. Half of the inputs, so that valid trees are compared as often as errors.
+    const withArgs = fns.filter((f) => f.args && f.args.fields.length)
+    const text = () => pick(["a", "text", " ", "1", "\\;", "\\]", "\\$", "😀", "x y", ""])
+    const call = (depth) => {
+        if (depth > 3 || r() < 0.3) return pick(kinds.none.length ? kinds.none : fns).name
+        const f = pick(withArgs)
+        const fields = f.args.fields
+        const count = fields.some((x) => x.rest) ? fields.length + Math.floor(r() * 3) : 1 + Math.floor(r() * fields.length)
+        const args = []
+        for (let k = 0; k < count; k++) {
+            const condition = fields[Math.min(k, fields.length - 1)].condition
+            let arg = r() < 0.5 ? call(depth + 1) : text()
+            if (condition && r() < 0.7) arg += pick(["==", "!=", "<=", ">=", "<", ">"]) + (r() < 0.5 ? call(depth + 1) : text())
+            args.push(arg)
+        }
+        return `${f.name}[${args.join(";")}]`
+    }
     const out = []
     for (let i = 0; i < n; i++) {
+        if (i % 2) {
+            let code = ""
+            const parts = 1 + Math.floor(r() * 4)
+            for (let j = 0; j < parts; j++) code += text() + call(0)
+            out.push(code)
+            continue
+        }
         let code = ""
         const len = 1 + Math.floor(r() * 30)
         for (let j = 0; j < len; j++) {
