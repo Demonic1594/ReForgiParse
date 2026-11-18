@@ -14,6 +14,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.closest = exports.checkScript = void 0;
 // SPDX-License-Identifier: LGPL-3.0-or-later
 __exportStar(require("./table"), exports);
 __exportStar(require("./parser"), exports);
@@ -25,4 +26,7 @@ __exportStar(require("./values"), exports);
 __exportStar(require("./fix"), exports);
 __exportStar(require("./config"), exports);
 __exportStar(require("./directives"), exports);
+var core_1 = require("./core");
+Object.defineProperty(exports, "checkScript", { enumerable: true, get: function () { return core_1.checkScript; } });
+Object.defineProperty(exports, "closest", { enumerable: true, get: function () { return core_1.closest; } });
 //# sourceMappingURL=index.js.map

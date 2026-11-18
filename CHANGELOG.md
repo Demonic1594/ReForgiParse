@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- **`reforgiparse --lsp`**, a language server for any editor that speaks the protocol, with no dependencies: diagnostics as you type (the command line's, with the config and directives), quick fixes for a name's letter case, for escaping brackets (marked as changing what the bot sends) and for turning a rule off for a line, and "fix all". The line directive is `$c[...]` at the end of a code line, offered only when the code then does the same apart from it, or a JavaScript comment above other lines. Functions, config and custom functions are read again on save; a broken config is shown to the user.
+- **`reforgiparse/core`**: `checkScript(text, table, options)`, the checks on one file's text with no file access and no ForgeScript needed, for editor extensions and browsers. The command line and the server use it.
+- Found by the new tests: messages the server sent while loading the bot went to stderr instead of the editor, because ForgeScript's output is redirected then. The protocol now always writes to the original stdout.
+
 ## 0.4.1
 
 - **`--reindent`**, opt-in: indents lines that start with a function, `;` or `]` by nesting depth. Lines that start with text and blank lines stay as written, and so does every line of an argument that also has text (that whitespace is sent with the words) and every line inside a condition (whitespace there is compared: `$if[` then `1==1` on an indented line is false). The result must parse the same apart from that whitespace. The config's `indent` sets spaces per level, or `"tab"`.

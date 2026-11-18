@@ -34,7 +34,7 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 1 error(s), 2 warning(s) in 1 file(s) under . (functions: @tryforge/forge.db 2.1.1, @tryforge/forgescript 2.8.0)
 ```
 
-> **Status: 0.4.1.** Checks, fixes and parser are tested against ForgeScript 2.8.0 and 2.5.0. Coming next: editor support. The API may change before 1.0.
+> **Status: 0.5.0.** Checks, fixes, the language server and the parser are tested against ForgeScript 2.8.0 and 2.5.0. The API may change before 1.0.
 
 ## Contents
 
@@ -44,11 +44,12 @@ commands/shop.js:9:1  warning  $sendMesage is not a function here, so ForgeScrip
 4. [Fixing](#fixing)
 5. [Config](#config)
 6. [Turning rules off in code](#turning-rules-off-in-code)
-7. [In CI](#in-ci)
-8. [Using the parser](#using-the-parser)
-9. [How it is tested](#how-it-is-tested)
-10. [Compared with ForgeLint](#compared-with-forgelint)
-11. [Licence](#licence)
+7. [In an editor](#in-an-editor)
+8. [In CI](#in-ci)
+9. [Using the parser](#using-the-parser)
+10. [How it is tested](#how-it-is-tested)
+11. [Compared with ForgeLint](#compared-with-forgelint)
+12. [Licence](#licence)
 
 ## Why ReForgiParse
 
@@ -76,6 +77,7 @@ npx reforgiparse --rules               # what each rule checks
 | `--fix` | Fix what cannot change the bot, then check. See [Fixing](#fixing). |
 | `--fix-brackets` | Also escape brackets that close a function too early. This changes what the bot sends, on purpose. |
 | `--reindent` | Opt-in: indent lines that start with a function, `;` or `]` by nesting. See [Fixing](#fixing) for what it leaves alone. |
+| `--lsp` | Run as a language server for editors. See [In an editor](#in-an-editor). |
 | `--config <file>` | Use this config. Default: `reforgiparse.config.json`, or `"reforgiparse"` in `package.json`. |
 | `--no-warnings` | Errors only. |
 | `--no-info` | Leave out the spelling hints. |
@@ -212,6 +214,53 @@ module.exports = { name: "x", type: "messageCreate", code: "$round[abc]" }
 
 Without rule names, a directive covers every rule; separate several with spaces or commas. A misspelt rule name is reported (`unknown-rule`), since it would turn nothing off. `forgelint-` directives are honoured too, so a bot moving from ForgeLint keeps the ones it has.
 
+## In an editor
+
+**A language server: `reforgiparse --lsp`.** Any editor that speaks the Language Server Protocol can run it from the bot's folder. It has no dependencies, and gives:
+
+- the same diagnostics as the command line, as you type, with the bot's config and directives;
+- quick fixes: a name's letter case; escaping brackets that close a function too early (marked as changing what the bot sends); and turning a rule off for a line, as `$c[reforgiparse-disable-line rule]` at the end of a code line (offered only when the code then does the same apart from that comment) or a JavaScript comment above other lines;
+- "fix all" for the letter-case fixes;
+- the bot's functions, config and custom functions read again when a file is saved. A config that cannot be used is shown as an error message.
+
+Neovim 0.11 or newer:
+
+```lua
+vim.lsp.config("reforgiparse", {
+    cmd = { "npx", "reforgiparse", "--lsp" },
+    filetypes = { "javascript", "typescript" },
+    root_markers = { "package.json" },
+})
+vim.lsp.enable("reforgiparse")
+```
+
+Helix, in `languages.toml`:
+
+```toml
+[language-server.reforgiparse]
+command = "npx"
+args = ["reforgiparse", "--lsp"]
+
+[[language]]
+name = "javascript"
+language-servers = ["typescript-language-server", "reforgiparse"]
+```
+
+VS Code runs language servers through an extension; ReForgiParse does not publish one. It works alongside [ForgeVSC](https://github.com/tryforge/ForgeVSC), the official ForgeScript extension, which gives completion, hover and highlighting.
+
+The server is tested over the protocol, as an editor speaks to it (`test/lsp.test.js`). The editor configurations above follow each editor's documented format but were not run in those editors here.
+
+**Embedding: `reforgiparse/core`.** The checks on one file's text, with no file access and no ForgeScript needed, for an editor extension or a browser:
+
+```js
+const { checkScript, FunctionTable } = require("reforgiparse/core")
+
+const table = FunctionTable.fromMetadata(extensionFunctions, forgeScriptFunctions) // metadata/functions.json format
+checkScript(text, table, { events, rules })  // [{ line, column, endLine, endColumn, severity, rule, message }]
+```
+
+It finds everything the command line finds except argument values, which need ForgeScript's own resolvers (pass a `ValueChecker` made from ForgeScript to check them too), and command types, which need the event names (`events`).
+
 ## In CI
 
 ```yaml
@@ -249,6 +298,7 @@ Project.load("./mybot").check()                                // the rules on a
 | `extractCode(text)` | The `code:` strings of a JavaScript or TypeScript file, as ForgeScript receives them, with each character's offset in the file. |
 | `fixText(text, table, { case, brackets, reindent, indent })` | `{ text, fixes, skipped }`: the file with the fixes made, what was fixed, and what was left alone and why. |
 | `loadConfig(folder)`, `directivesIn(text)`, `isSuppressed(...)` | The config and the directives, for tools of your own. |
+| `checkScript(text, table, options)` | Everything on one file's text, without reading files: what the command line and the language server use. Also as `reforgiparse/core`. |
 | `FunctionTable` | `fromForgeScript()`, `fromMetadata(...lists)`, or `new FunctionTable(raw)`. |
 | `nameIssues`, `render`, `walk`, `usage`, `suggest` | Helpers. |
 
@@ -256,7 +306,7 @@ Offsets are UTF-16 indexes, like JavaScript string indexes.
 
 ## How it is tested
 
-`npm test` (55 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
+`npm test` (59 tests), in CI on Node 22 and 24, and on ForgeScript 2.8.0 and 2.5.0, the oldest the peer range allows.
 
 **ForgeScript is the reference.** Every change that can affect parsing is diffed against ForgeScript's real compiler before it is committed, and any difference is a bug in ReForgiParse. `npm run parity` runs that diff; `REFORGIPARSE_CORPUS=<folder> npm run parity` adds every ForgeScript snippet under a folder. The rules for contributors are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -268,6 +318,8 @@ What `npm test` checks:
 - **Every rule**, on code that has the problem and code that does not, with ForgeScript's resolvers deciding.
 - **Every rule's claim, on ForgeScript's interpreter**: each rule's example is run offline on ForgeScript's real interpreter, and ForgeScript must do what the message says. Where a message quotes ForgeScript's error, ForgeScript must log exactly that text.
 - **A whole bot**: an exact list of findings at their lines and columns; the command line's text, JSON and GitHub output and exit codes; an extension without metadata.
+- **The language server**, spoken to as an editor would (a real process, framed JSON-RPC): its diagnostics equal the command line's; each quick fix, applied, removes its problem; nothing but protocol reaches stdout; a broken config reaches the editor as a message; "turn off for this line" is not offered where `$c[...]` would change the code.
+- **`reforgiparse/core`** in a process with no ForgeScript, given only metadata: it loads neither ForgeScript nor anything that reads files, and finds what the full check finds apart from argument values.
 - **Config, directives and fixes**, on real bots in temporary folders: levels, `off`, `known`, `exclude`, the `package.json` key, and an error for each kind of config mistake; every directive, ForgeLint's included. `--fix` must leave what ForgeScript's own compiler makes of the code unchanged; after `--fix-brackets`, ForgeScript's interpreter must print the text as written; after `--reindent`, the compiler must see the same code apart from indentation, and the interpreter shows the indentation it moves is part of what `$if` returns, and that whitespace in a condition is compared.
 
 Run by hand, not in CI: 6,931 snippets of a ForgeScript knowledge base and 168 from 16 example bots, with four extensions loaded, parse exactly as ForgeScript compiles them; `npx reforgiparse` on those 16 bots, with ForgeDB, ForgeGiveaways, ForgeMusic, ForgeLinked and the four ReForge extensions installed, reports no errors and no warnings; and `--reindent` on those 16 bots leaves every one of their 101 code strings compiling the same on ForgeScript apart from indentation, with the lines among message text (a poll's list of options) left as written.

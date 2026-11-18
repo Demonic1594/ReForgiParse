@@ -22,6 +22,7 @@ Usage: reforgiparse [folder | files...] [options]
   --no-info           leave out info (spelling hints)
   --quiet             print nothing when there is no problem
   --rules             list the rules
+  --lsp               run as a language server on stdin and stdout, for editors
   -h, --help          show this help
   -v, --version       show the version
 
@@ -50,6 +51,7 @@ function parseArgs(argv: string[]): Args | number {
         const a = argv[i]
         if (a === "-h" || a === "--help") return console.log(HELP), 0
         if (a === "-v" || a === "--version") return console.log(require("../package.json").version), 0
+        if (a === "--lsp") return require("./lsp").serve(), -1
         if (a === "--rules") {
             for (const [name, r] of [...Object.entries(Rules), ...Object.entries(ProjectRules)]) console.log(`${name.padEnd(20)} ${r.severity.padEnd(8)} ${r.description}`)
             return 0
@@ -159,4 +161,8 @@ export function main(argv = process.argv.slice(2)): number {
     return errors ? 1 : 0
 }
 
-if (require.main === module) process.exitCode = main()
+if (require.main === module) {
+    const code = main()
+    // -1: the language server keeps running until the editor ends it.
+    if (code >= 0) process.exitCode = code
+}
