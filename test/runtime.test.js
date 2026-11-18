@@ -68,6 +68,14 @@ test("invalid-argument: the command stops with the error the message quotes", as
     for (const code of ["$round[1.5]", "$wait[1]", "$addActionRow$addButton[id;Hi;Primary]"]) assert.notEqual((await run(code)).output, null, code)
 })
 
+test("invalid-argument and too-few-arguments: only the first argument ForgeScript rejects, where it stops", async () => {
+    for (const code of ["$addButton[id;label;primary;;yes]", "$addField[Coins;5;maybe;x]"]) {
+        const found = checkCode(code, table, { values }).filter((f) => f.rule === "invalid-argument" || f.rule === "too-few-arguments")
+        assert.equal(found.length, 1, `one finding for ${code}: ${JSON.stringify(found.map((f) => f.message))}`)
+        await stopsAsQuoted(code, found[0].rule)
+    }
+})
+
 test("color-value: the embed gets the colour the message says", async () => {
     assert.match(finding("$color[blue]", "color-value").message, /#00000b/)
     assert.equal((await run("$color[blue]")).color, 0x00000b)
@@ -116,6 +124,16 @@ test("hidden-output: $! hides the output, as $let did", async () => {
 test("escaped-letter: \\n inside an argument is the letter n", async () => {
     finding("$let[x;a\\nb]$get[x]", "escaped-letter")
     assert.equal((await run("$let[x;a\\nb]$get[x]")).output, "anb")
+})
+
+test("stray-bracket: a ] that closes no function is printed", async () => {
+    for (const [code, printed] of [["$let[a;1]]", "]"], ["$if[1==1;yes]]", "yes]"]]) {
+        finding(code, "stray-bracket")
+        assert.equal((await run(code)).output, printed)
+    }
+    // Balanced brackets in text are printed as written, and are not reported.
+    assert.equal((await run("Page [1/3]")).output, "Page [1/3]")
+    assert.ok(!checkCode("Page [1/3]", table, { values }).some((f) => f.rule === "stray-bracket"))
 })
 
 test("unexpected-brackets, unknown-function, glued-name: what is printed", async () => {

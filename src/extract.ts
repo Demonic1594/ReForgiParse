@@ -175,7 +175,8 @@ export function skipRegex(text: string, i: number): number {
     return i + 1
 }
 
-function skipComment(text: string, i: number): number {
+/** The end of the line or block comment starting at `text[i]`; the end of the text when a block comment is never closed. */
+export function skipComment(text: string, i: number): number {
     if (text[i + 1] === "/") {
         const j = text.indexOf("\n", i)
         return j < 0 ? text.length : j
@@ -232,6 +233,26 @@ export function fileOffset(source: CodeSource, index: number): number {
     if (!source.offsets.length) return source.start + 1
     if (index >= source.offsets.length) return source.offsets[source.offsets.length - 1] + 1
     return source.offsets[Math.max(0, index)]
+}
+
+/**
+ * Line and column lookups for one text, after one pass over it: for many offsets in the same file
+ * (each finding's start and end), where {@link lineColumn} would scan from the start every time.
+ */
+export function lineIndex(text: string): (offset: number) => { line: number; column: number } {
+    const starts = [0]
+    for (let i = 0; i < text.length; i++) if (text[i] === "\n") starts.push(i + 1)
+    return (offset) => {
+        const at = Math.min(Math.max(offset, 0), text.length)
+        let lo = 0
+        let hi = starts.length - 1
+        while (lo < hi) {
+            const mid = (lo + hi + 1) >> 1
+            if (starts[mid] <= at) lo = mid
+            else hi = mid - 1
+        }
+        return { line: lo + 1, column: offset - starts[lo] + 1 }
+    }
 }
 
 /** 1-based line and column of a file offset. */

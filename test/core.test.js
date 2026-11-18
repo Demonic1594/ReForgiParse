@@ -44,3 +44,25 @@ test("core runs with only metadata and text: no ForgeScript, no file access, sam
     assert.deepEqual(found.map(key), full.map(key))
     assert.deepEqual(found.map((d) => d.rule).sort(), ["condition-operator", "function-case", "glued-name", "unclosed-bracket", "unescaped-bracket", "unknown-function"])
 })
+
+test("a file being typed: unfinished comments, strings, templates and regexes end the check, never hang it", () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const head = 'module.exports = { type: "messageCreate", code: "$pingms" }\n'
+    for (const tail of ["/* still typing", "/*", "// no newline", "'unterminated", "`template $ping", "`${a", "`${'", "const r = /[", "{ code: `$ping", "{ 'code'", "/"]) {
+        const started = Date.now()
+        const found = checkScript(head + tail, table)
+        assert.ok(Date.now() - started < 1000, `${JSON.stringify(tail)} took ${Date.now() - started} ms`)
+        assert.ok(found.some((d) => d.rule === "glued-name"), JSON.stringify(tail))
+    }
+})
+
+test("FunctionTable.fromForgeScript() loads ForgeScript's functions when nothing has yet", () => {
+    // A fresh process, as a script that never called FunctionManager.loadNative().
+    const r = spawnSync(process.execPath, ["-e", 'const { FunctionTable } = require("."); const t = FunctionTable.fromForgeScript(); console.log(t.functions.length, !!t.get("$sendMessage"))'], { cwd: path.join(__dirname, ".."), encoding: "utf8" })
+    assert.equal(r.status, 0, r.stderr)
+    const [count, found] = r.stdout.trim().split(" ")
+    assert.ok(Number(count) > 1000, r.stdout)
+    assert.equal(found, "true")
+    assert.doesNotMatch(r.stderr, /Attempted to override/)
+})

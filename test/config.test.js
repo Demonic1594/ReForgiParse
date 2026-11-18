@@ -230,3 +230,77 @@ test("--reindent on the command line, and the indent option", () => {
     fs.writeFileSync(path.join(dir, "reforgiparse.config.json"), JSON.stringify({ indent: "two" }))
     assert.throws(() => Project.load(dir), /"indent" must be a number of spaces from 1 to 8, or "tab", not "two"/)
 })
+
+test("Windows line endings and a byte-order mark: the same findings, and fixes keep CRLF", () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const { checkScript } = require("..")
+    const lf = [
+        "module.exports = [{",
+        '    type: "messageCreate",',
+        "    code: `$AUTHORID 😀 $pingms",
+        "$description[[a](b)]",
+        "\t$sendMesage[$channelID;hi]",
+        "$c[reforgiparse-disable-next-line unknown-function]",
+        "$nope",
+        "$let[a;1]$get[a]]`",
+        "}]",
+        "",
+    ].join("\n")
+    const key = (d) => `${d.line}:${d.column}-${d.endLine}:${d.endColumn} ${d.rule}`
+    const expected = checkScript(lf, table).map(key)
+    assert.deepEqual(expected.map((k) => k.split(" ")[1]), ["function-case", "glued-name", "unescaped-bracket", "unknown-function", "stray-bracket"])
+    for (const text of [lf.replace(/\n/g, "\r\n"), `﻿${lf}`, `﻿${lf.replace(/\n/g, "\r\n")}`]) {
+        assert.deepEqual(checkScript(text, table).map(key), expected)
+    }
+    const crlf = lf.replace(/\n/g, "\r\n")
+    for (const options of [{}, { brackets: true }, { reindent: true }]) {
+        const r = fixText(crlf, table, options)
+        assert.ok(r.fixes.length, JSON.stringify(options))
+        assert.doesNotMatch(r.text, /[^\r]\n/, `${JSON.stringify(options)} keeps CRLF`)
+    }
+})
+
+test("--fix leaves names inside $escapeCode, which prints them as written", async () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const before = "module.exports = { code: `$AUTHORID $escapeCode[$AUTHORID and $Ping]` }"
+    const r = fixText(before, table)
+    assert.equal(r.text, "module.exports = { code: `$authorID $escapeCode[$AUTHORID and $Ping]` }")
+    assert.deepEqual(r.skipped.map((f) => f.description), ["$AUTHORID → $authorID: inside $escapeCode, which prints the code as written", "$Ping → $ping: inside $escapeCode, which prints the code as written"])
+    // What the bot sends is the same before and after.
+    const { ForgeClient, Compiler, Interpreter } = forgescript
+    const out = process.stdout.write
+    process.stdout.write = () => true
+    const client = new ForgeClient({ intents: ["Guilds"] })
+    const run = (code) => Interpreter.run({ client, data: Compiler.compile(code), obj: { channel: { id: "1" }, author: { id: "123456789012345678" } }, command: null, doNotSend: true, allowTopLevelReturn: true })
+    const [a, b] = [await run(extractCode(before)[0].value), await run(extractCode(r.text)[0].value)]
+    process.stdout.write = out
+    assert.equal(a, b)
+})
+
+test("--reindent says why it leaves code written as one line with \\n escapes", () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const text = 'module.exports = { code: "$if[1==1;\\n    $ping\\n]" }'
+    const r = fixText(text, table, { case: false, reindent: true })
+    assert.equal(r.text, text)
+    assert.deepEqual(r.skipped.map((f) => [f.offset, f.description]), [[text.indexOf('"$if'), "not re-indented: its lines are \\n escapes in a JavaScript string, not lines of the file"]])
+    // The same in a template literal written on one line.
+    const template = "module.exports = { code: `$if[1==1;\\n    $ping\\n]` }"
+    assert.deepEqual(fixText(template, table, { case: false, reindent: true }).skipped.map((f) => f.description), ["not re-indented: its lines are \\n escapes in a JavaScript string, not lines of the file"])
+})
+
+test("--fix-brackets on many brackets: all of them, in time, with offsets in the file as it was", () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const line = "$description[[docs](https://x.y)]\n"
+    const text = `module.exports = { code: \`${line.repeat(700)}\` }\nmodule.exports.b = { code: '${line.trim()}' }\n`
+    const started = Date.now()
+    const r = fixText(text, table, { case: false, brackets: true })
+    assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`)
+    assert.equal(r.fixes.length, 701)
+    assert.equal(r.text, `module.exports = { code: \`${"$description[\\\\[docs\\\\](https://x.y)]\n".repeat(700)}\` }\nmodule.exports.b = { code: '$description[\\\\[docs\\\\](https://x.y)]' }\n`)
+    // Each fix's offset is where its ] was in the text before fixing.
+    for (const f of r.fixes) assert.equal(text[f.offset], "]", `offset ${f.offset}`)
+})

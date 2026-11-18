@@ -2,6 +2,33 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.7.0 - 2026-11-18
+
+### Added
+
+- `stray-bracket` warning: a `]` outside any function that no `[` opened, which ForgeScript prints (`$let[a;1]]` sends `]`). Balanced brackets in text, such as `Page [1/3]`, are not reported.
+
+### Changed
+
+- One mistake gives one finding:
+  - a misspelt name in an argument is not also reported as an invalid argument value;
+  - in a call that does not compile, its arguments are not checked for values or count;
+  - the `]` left over by an unescaped `[` belongs to that `unescaped-bracket` finding;
+  - a `$let` with an empty name is not reported as an unused variable.
+- Only the first argument ForgeScript rejects in a call is reported (`invalid-argument` or `too-few-arguments`): ForgeScript stops the command there and never reads the others.
+- Code inside `$escapeCode[...]` is printed, never run: only compile errors and bracket problems are reported in it, and its `$let` and `$get` count for no variable.
+- Variable rules stand down for code that calls `$coroutine`, which runs its code in another thread.
+- `FunctionTable.fromForgeScript()` loads ForgeScript's functions when none are registered yet, so a script no longer needs `FunctionManager.loadNative()` first.
+- `--reindent` says why it leaves code whose lines are `\n` escapes in a JavaScript string.
+- Checking is linear in the size of a file: an 84 kB code string takes about 50 ms instead of 0.7 s. `--fix-brackets` fixes a whole code string in one pass: 84 kB takes 0.2 s instead of 13 s.
+
+### Fixed
+
+- A file ending inside an unclosed `/*` comment made the check loop without end until memory ran out, in the command line and in the language server while a comment was being typed.
+- `--fix` changed the letter case of names inside `$escapeCode[...]`, which prints its code as written, so the bot's output changed.
+- `--fix-brackets` stopped after 500 fixes in a file.
+- The language server registered ForgeScript's functions again on every save, and ForgeScript logged a warning each time.
+
 ## 0.6.0 - 2026-11-18
 
 ### Added
