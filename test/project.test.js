@@ -4,11 +4,14 @@
 // tool reports them with the right exit code.
 const { test } = require("node:test")
 const assert = require("node:assert/strict")
+const fs = require("node:fs")
 const path = require("node:path")
 const { spawnSync } = require("node:child_process")
 const { Project, Rules } = require("..")
 
 const BOT = path.join(__dirname, "fixtures", "bot")
+const FORGESCRIPT = require("@tryforge/forgescript/package.json").version
+const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 const CLI = path.join(__dirname, "..", "dist", "cli.js")
 
 const EXPECTED = [
@@ -17,7 +20,6 @@ const EXPECTED = [
     ["commands/problems.js", 7, 23, "too-many-arguments"],
     ["commands/problems.js", 8, 18, "unexpected-brackets"],
     ["commands/problems.js", 9, 41, "missing-brackets"],
-    ["commands/problems.js", 9, 41, "glued-name"],
     ["commands/problems.js", 13, 16, "unclosed-bracket"],
     ["commands/problems.js", 16, 11, "unknown-event"],
     ["commands/problems.js", 17, 17, "unexpected-brackets"],
@@ -36,21 +38,29 @@ test("a bot's problems are found once each, at the right place, and clean code h
     assert.match(got.find((d) => d.rule === "unknown-function").message, /Did you mean \$sendMessage\?/)
     assert.match(got.find((d) => d.rule === "unknown-event").message, /Did you mean "messageCreate"\?/)
     assert.match(got.find((d) => d.rule === "too-few-arguments").message, /"value", so ForgeScript stops the command: "Function \$addField is missing argument value"\. Usage: \$addField\[name;value;inline\?;index\?\]/)
+    assert.match(got.find((d) => d.line === 9).message, /^\$authorI is not a function here: ForgeScript reads \$author, which requires brackets, so the code does not compile\. Did you mean \$authorID\?/)
     assert.deepEqual(project.checkFile("commands/clean.js"), [])
 })
 
-const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: BOT, encoding: "utf8" })
+const ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== "FORCE_COLOR" && k !== "NO_COLOR"))
+const run = (...args) => spawnSync(process.execPath, [CLI, ...args], { cwd: BOT, encoding: "utf8", env: ENV })
 
 test("the command line: text, JSON, errors only, exit codes", () => {
     const text = run()
     assert.equal(text.status, 1)
-    assert.match(text.stdout, /^commands\/problems\.js:6:1 {2}error {4}Function \$sendMessage requires brackets/m)
-    assert.match(text.stdout, /7 error\(s\), 5 warning\(s\) in 4 file\(s\)/)
+    assert.match(text.stdout, /^commands\/problems\.js:6:1 +error {4}Function \$sendMessage requires brackets/m)
+    assert.match(text.stdout, new RegExp(`^7 errors, 4 warnings in 4 files\nFunctions from @tryforge/forgescript ${escape(FORGESCRIPT)}, custom\\.\n$`, "m"))
+    // Severities line up within a file.
+    const lines = text.stdout.split("\n").filter((l) => l.startsWith("commands/"))
+    assert.equal(new Set(lines.map((l) => l.search(/(error|warning|info) /))).size, 1)
 
     const json = JSON.parse(run("--json").stdout)
     assert.equal(json.errors, 7)
-    assert.equal(json.warnings, 5)
+    assert.equal(json.warnings, 4)
     assert.equal(json.diagnostics.length, EXPECTED.length)
+    // Functions, not names: an alias is not counted again.
+    assert.equal(json.functions, json.sources.reduce((n, s) => n + s.functions, 0))
+    assert.deepEqual(JSON.parse(run("--format=json").stdout), json)
 
     const errorsOnly = run("--no-warnings")
     assert.doesNotMatch(errorsOnly.stdout, /warning {2}/)
@@ -71,10 +81,92 @@ test("the command line: text, JSON, errors only, exit codes", () => {
     assert.match(run("--version").stdout, /^\d+\.\d+\.\d+/)
 })
 
+test("the command line: paths, options and colours", () => {
+    // A path that does not exist, or is not code, is a mistake: never a check of nothing.
+    for (const [args, message] of [
+        [["commands/nope.js"], /^reforgiparse: commands\/nope\.js: no such file or folder\. See reforgiparse --help\.\n$/],
+        [["package.json"], /^reforgiparse: package\.json: not a JavaScript or TypeScript file/],
+        [["--fixbrackets"], /^reforgiparse: unknown option --fixbrackets \(did you mean --fix-brackets\?\)/],
+        [["--format=xml"], /^reforgiparse: --format takes text, json or github, not "xml"/],
+        [["--max-warnings", "some"], /^reforgiparse: --max-warnings needs a number of warnings, not "some"/],
+        [["commands", path.join("..", "..")], /^reforgiparse: \.\.\/\.\. is not in the bot at \.: check one bot at a time/],
+    ]) {
+        const r = run(...args)
+        assert.equal(r.status, 2, args.join(" "))
+        assert.match(r.stderr, message)
+    }
+
+    // A folder inside the bot is checked as part of the bot: its custom functions are known.
+    const folder = run("commands", "--json")
+    const inFolder = JSON.parse(folder.stdout)
+    assert.equal(inFolder.root, BOT)
+    assert.deepEqual([...new Set(inFolder.diagnostics.map((d) => d.file))], ["commands/problems.js"])
+    assert.deepEqual(inFolder.diagnostics.map((d) => [d.file, d.line, d.column, d.rule]), EXPECTED)
+    const fromInside = spawnSync(process.execPath, [CLI, "problems.js", "--json"], { cwd: path.join(BOT, "commands"), encoding: "utf8", env: ENV })
+    assert.deepEqual(JSON.parse(fromInside.stdout).diagnostics, inFolder.diagnostics)
+
+    // --max-warnings: more warnings than allowed fail the check.
+    const clean = (...args) => run("functions", "commands/clean.js", ...args)
+    assert.equal(clean().status, 0)
+    const warn = path.join(BOT, "commands", "warn.js")
+    fs.writeFileSync(warn, 'module.exports = { type: "messageCreate", code: "$pingms" }\n')
+    try {
+        assert.equal(run("commands/warn.js").status, 0)
+        assert.equal(run("commands/warn.js", "--max-warnings", "1").status, 0)
+        const over = run("commands/warn.js", "--max-warnings=0")
+        assert.equal(over.status, 1)
+        assert.match(over.stdout, /^More than --max-warnings 0: exit code 1\.$/m)
+        assert.match(run("commands/warn.js", "--max-warnings", "0", "--format", "github").stdout, /^::error title=reforgiparse::1 warning, more than --max-warnings 0$/m)
+    } finally {
+        fs.rmSync(warn)
+    }
+
+    // No colours when not on a terminal, unless FORCE_COLOR asks for them.
+    assert.doesNotMatch(run().stdout, /\x1b\[/)
+    const forced = spawnSync(process.execPath, [CLI], { cwd: BOT, encoding: "utf8", env: { ...ENV, FORCE_COLOR: "1" } })
+    assert.match(forced.stdout, /\x1b\[31m7 errors/)
+    assert.match(run("commands/clean.js").stdout, /^No problems in 1 file\n/)
+})
+
 test("an extension without metadata: its NativeFunction files are read without starting it", () => {
     const { readNatives, usage } = require("..")
     const r = readNatives(path.join(__dirname, "fixtures", "native-extension"))
     assert.deepEqual(r.functions.map((f) => [f.name, usage(f), f.unwrap]), [["$fixtureDouble", "$fixtureDouble[number]", true]])
     assert.equal(r.failures.length, 1)
     assert.match(r.failures[0], /broken\.js \(broken on purpose\)/)
+})
+
+test("an extension with metadata/functions.json: its functions, events and descriptions are loaded", () => {
+    const os = require("node:os")
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reforgiparse-meta-"))
+    const write = (file, data) => {
+        fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true })
+        fs.writeFileSync(path.join(dir, file), typeof data === "string" ? data : JSON.stringify(data))
+    }
+    write("package.json", { name: "bot", dependencies: { "@tryforge/forgescript": "2.8.0", "fixture-meta": "1.2.3", "fixture-broken": "1.0.0", "left-pad": "1.0.0" }, devDependencies: { reforgiparse: "*" } })
+    fs.mkdirSync(path.join(dir, "node_modules", "@tryforge"), { recursive: true })
+    fs.symlinkSync(path.join(__dirname, "..", "node_modules", "@tryforge", "forgescript"), path.join(dir, "node_modules", "@tryforge", "forgescript"), "dir")
+    write("node_modules/fixture-meta/package.json", { name: "fixture-meta", version: "1.2.3", peerDependencies: { "@tryforge/forgescript": "*" } })
+    write("node_modules/fixture-meta/metadata/functions.json", [
+        { name: "$metaGreet", description: "Greets someone", brackets: true, unwrap: true, args: [{ name: "who", required: true, type: "String" }], output: ["String"] },
+    ])
+    write("node_modules/fixture-meta/metadata/events.json", [{ name: "metaEvent" }])
+    write("node_modules/fixture-broken/package.json", { name: "fixture-broken", version: "1.0.0", dependencies: { "@tryforge/forgescript": "*" } })
+    write("node_modules/fixture-broken/metadata/functions.json", "{ not json")
+    // A package that does not use ForgeScript is not read at all, and neither is ReForgiParse itself.
+    write("node_modules/left-pad/package.json", { name: "left-pad", version: "1.0.0" })
+    fs.symlinkSync(path.join(__dirname, ".."), path.join(dir, "node_modules", "reforgiparse"), "dir")
+    const line = 'module.exports = [{ type: "metaEvent", code: "$metaGreet[you] $metaGreet $metaGret[x]" }]'
+    write("commands/a.js", `${line}\n`)
+
+    const project = Project.load(dir)
+    assert.deepEqual(project.sources.map((s) => [s.name, s.version]), [["fixture-meta", "1.2.3"], ["@tryforge/forgescript", FORGESCRIPT]])
+    assert.equal(project.sources[0].functions, 1)
+    assert.deepEqual(project.notes.map((n) => n.replace(/\(.*\)/, "(...)")), ["fixture-broken: cannot read metadata/functions.json (...)"])
+    const fn = project.table.get("$metaGreet")
+    assert.equal(fn.package, "fixture-meta")
+    assert.equal(fn.description, "Greets someone")
+    assert.deepEqual(fn.output, ["String"])
+    assert.deepEqual(project.check().map((d) => [d.rule, d.column]), [["missing-brackets", line.indexOf("$metaGreet $") + 1], ["unknown-function", line.indexOf("$metaGret[") + 1]])
+    assert.match(project.check()[1].message, /Did you mean \$metaGreet\?/)
 })

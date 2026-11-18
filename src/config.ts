@@ -5,6 +5,8 @@
 
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { closest, ProjectRules } from "./core"
+import { Rules } from "./rules"
 
 export type Level = "error" | "warning" | "info" | "off"
 
@@ -27,9 +29,24 @@ export const CONFIG_FILE = "reforgiparse.config.json"
 const LEVELS = new Set(["error", "warning", "info", "off"])
 
 export class ConfigError extends Error {
-    constructor(file: string, message: string) {
-        super(`${file}: ${message}`)
+    constructor(
+        /** The config file, or a description of where the config came from. */
+        readonly file: string,
+        /** What is wrong, without the file. */
+        readonly detail: string,
+    ) {
+        super(`${file}: ${detail}`)
         this.name = "ConfigError"
+    }
+}
+
+/** Throws a ConfigError when `rules` names something that is not a rule. */
+export function checkRuleNames(rules: Record<string, unknown> | undefined, where: string): void {
+    const names = [...Object.keys(Rules), ...Object.keys(ProjectRules)]
+    for (const rule of Object.keys(rules ?? {})) {
+        if (names.includes(rule)) continue
+        const guess = closest(rule, names)
+        throw new ConfigError(where, `"rules" names "${rule}", which is not a rule${guess ? ` (did you mean "${guess}"?)` : ""}. See reforgiparse --rules`)
     }
 }
 
@@ -98,6 +115,7 @@ function validate(raw: unknown, where: string): Config {
     const rules = (raw as Record<string, unknown>).rules
     if (rules !== undefined) {
         if (!rules || typeof rules !== "object" || Array.isArray(rules)) throw new ConfigError(where, `"rules" must be an object of rule names and levels`)
+        checkRuleNames(rules as Record<string, unknown>, where)
         for (const [name, level] of Object.entries(rules)) {
             if (typeof level !== "string" || !LEVELS.has(level)) throw new ConfigError(where, `rule "${name}" must be "error", "warning", "info" or "off", not ${JSON.stringify(level)}`)
         }

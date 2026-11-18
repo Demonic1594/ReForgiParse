@@ -70,6 +70,10 @@ export function cook(text: string, i: number): Cooked {
                     k = skipComment(text, k)
                     continue
                 }
+                if (ch === "/" && regexCanStart(text, k, j + 2)) {
+                    k = skipRegex(text, k)
+                    continue
+                }
                 if (ch === "{") depth++
                 else if (ch === "}") depth--
                 k++
@@ -132,6 +136,45 @@ export function cook(text: string, i: number): Cooked {
     return done(n, "unterminated literal")
 }
 
+/** Words after which a `/` starts a regular expression, not a division. */
+const BEFORE_REGEX = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do", "else", "yield", "await"])
+
+/**
+ * Whether a `/` at `text[i]` (not a comment) starts a regular expression literal, judged as
+ * JavaScript's grammar does in practice: after a value (a name, number, string, `)` or `]`) it is a
+ * division; after an operator, punctuation, a keyword such as `return`, or nothing, a regex.
+ */
+export function regexCanStart(text: string, i: number, from = 0): boolean {
+    let k = i - 1
+    while (k >= from && /\s/.test(text[k])) k--
+    if (k < from) return true
+    const p = text[k]
+    if (/[\w$]/.test(p)) {
+        let w = k
+        while (w > from && /[\w$]/.test(text[w - 1])) w--
+        return BEFORE_REGEX.has(text.slice(w, k + 1))
+    }
+    return !/[)\]"'`.]/.test(p)
+}
+
+/** The end of the regular expression literal starting at `text[i]`, past its flags. */
+export function skipRegex(text: string, i: number): number {
+    let inClass = false
+    for (let k = i + 1; k < text.length; k++) {
+        const c = text[k]
+        if (c === "\n" || c === "\r") return i + 1 // not a regex after all: a line cannot hold half of one
+        if (c === "\\") k++
+        else if (c === "[") inClass = true
+        else if (c === "]") inClass = false
+        else if (c === "/" && !inClass) {
+            k++
+            while (k < text.length && /[a-z]/i.test(text[k])) k++
+            return k
+        }
+    }
+    return i + 1
+}
+
 function skipComment(text: string, i: number): number {
     if (text[i + 1] === "/") {
         const j = text.indexOf("\n", i)
@@ -150,7 +193,7 @@ const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
  */
 export function extractCode(text: string, properties: readonly string[] = ["code"]): CodeSource[] {
     const names = [...new Set(properties)].sort((a, b) => b.length - a.length).map(escapeRegex).join("|")
-    const prop = new RegExp(`(${names})\\s*:\\s*(["'\`])`, "y")
+    const prop = new RegExp(`(["']?)(${names})\\1\\s*:\\s*(["'\`])`, "y")
     const found: CodeSource[] = []
     let i = 0
     const n = text.length
@@ -166,13 +209,17 @@ export function extractCode(text: string, properties: readonly string[] = ["code
             if (m) {
                 const q = prop.lastIndex - 1
                 const r = cook(text, q)
-                found.push({ property: m[1], value: r.value, offsets: r.offsets, start: q, end: r.end, dynamic: r.dynamic, error: r.error })
+                found.push({ property: m[2], value: r.value, offsets: r.offsets, start: q, end: r.end, dynamic: r.dynamic, error: r.error })
                 i = r.end
                 continue
             }
         }
         if (c === '"' || c === "'" || c === "`") {
             i = cook(text, i).end
+            continue
+        }
+        if (c === "/" && regexCanStart(text, i)) {
+            i = skipRegex(text, i)
             continue
         }
         i++

@@ -43,6 +43,10 @@ export interface IRawFunction {
     package?: string
     /** What it does with the two variable stores, read from its source when known. */
     stores?: { setsVariable?: boolean; readsVariable?: boolean; setsEnvironment?: boolean }
+    /** What it does, as its package documents it. */
+    description?: string
+    /** The ArgType names of what it returns, when documented. */
+    output?: readonly string[]
 }
 
 /** Escapes a name the way ForgeScript does before joining names into one regular expression. */
@@ -80,8 +84,14 @@ export class FunctionTable {
         return this.byKey.get(key.startsWith("$") ? key : `$${key}`)
     }
 
+    /** How many names and aliases call a function. */
     get size() {
         return this.byKey.size
+    }
+
+    /** Every function once, whatever names and aliases it has. */
+    get functions(): IRawFunction[] {
+        return [...new Set(this.byKey.values())]
     }
 
     /**
@@ -119,6 +129,8 @@ export interface IFunctionMetadata {
     args?: ReadonlyArray<{ name?: string; condition?: boolean; rest?: boolean; required?: boolean; type?: string; enum?: readonly string[] }> | null
     unwrap?: boolean
     deprecated?: boolean
+    description?: string
+    output?: string | readonly string[] | null
 }
 
 /** One metadata entry as the compiler sees it. */
@@ -133,7 +145,16 @@ export function fromMetadata(m: IFunctionMetadata): IRawFunction {
         params: (m.args ?? []).map((a) => ({ name: a.name ?? "", required: !!a.required, rest: !!a.rest, type: a.type, enum: Array.isArray(a.enum) ? a.enum : undefined })),
         unwrap: !!m.unwrap,
         deprecated: !!m.deprecated,
+        description: typeof m.description === "string" ? m.description : undefined,
+        output: outputNames(m.output),
     }
+}
+
+/** A function's documented output as ArgType names: from metadata (names) or a NativeFunction (ArgType numbers). */
+export function outputNames(output: unknown, argType?: Record<number, string>): string[] | undefined {
+    const list = Array.isArray(output) ? output : output === undefined || output === null ? [] : [output]
+    const names = list.map((t) => (typeof t === "number" ? argType?.[t] : typeof t === "string" ? t : undefined)).filter((t): t is string => !!t)
+    return names.length ? names : undefined
 }
 
 /** An argument as a NativeFunction defines it: `type` is an ArgType number, `enum` the enum object. */
@@ -147,7 +168,7 @@ export interface INativeArg {
 }
 
 interface ForgeScriptLike {
-    FunctionManager: { raw: IRawFunction[]; get?(name: string): { path?: string; data: { args?: INativeArg[]; unwrap?: boolean; deprecated?: boolean } } | undefined }
+    FunctionManager: { raw: IRawFunction[]; get?(name: string): { path?: string; data: { args?: INativeArg[]; unwrap?: boolean; deprecated?: boolean; description?: string; output?: unknown } } | undefined }
     ArgType?: Record<number, string>
 }
 
@@ -187,6 +208,8 @@ export function withParams(forgescript: ForgeScriptLike): IRawFunction[] {
             deprecated: !!data.deprecated,
             package: "@tryforge/forgescript",
             stores: storesOf(native.path),
+            description: typeof data.description === "string" ? data.description : undefined,
+            output: outputNames(data.output, forgescript.ArgType),
         }
     })
 }

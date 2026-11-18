@@ -57,7 +57,12 @@ test("config: a typo or a wrong value is an error, never a silent default", () =
     assert.throws(() => Project.load(dir), /is not valid JSON/)
     const cli = spawnSync(process.execPath, [CLI], { cwd: dir, encoding: "utf8" })
     assert.equal(cli.status, 2)
-    assert.match(cli.stderr, /^config: .*is not valid JSON/)
+    assert.match(cli.stderr, /^reforgiparse: config: reforgiparse\.config\.json: is not valid JSON/)
+    // A misspelt rule names the file it is in.
+    fs.writeFileSync(path.join(dir, "reforgiparse.config.json"), JSON.stringify({ rules: { "glued-names": "off" } }))
+    const typo = spawnSync(process.execPath, [CLI], { cwd: dir, encoding: "utf8" })
+    assert.equal(typo.status, 2)
+    assert.equal(typo.stderr, 'reforgiparse: config: reforgiparse.config.json: "rules" names "glued-names", which is not a rule (did you mean "glued-name"?). See reforgiparse --rules\n')
 })
 
 test("directives in $c[...] and in JavaScript comments, ForgeLint's too", () => {
@@ -130,6 +135,27 @@ test("--fix-brackets: ForgeScript then prints the text as written", async () => 
     // Without a later ] to close the function, escaping would leave it unclosed: left as it is.
     const stuck = fixText("module.exports = { code: '$let[x;[a]' }", table, { brackets: true })
     assert.equal(stuck.fixes.length, 0)
+})
+
+test("--fix-brackets: a [ written as \[ in JavaScript (which is just [) gets the backslash ForgeScript needs", async () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    const before = "module.exports = { code: `$let[x;\\[Docs\\](https://x.y)]$get[x]` }"
+    const r = fixText(before, table, { brackets: true })
+    assert.equal(r.text, "module.exports = { code: `$let[x;\\\\[Docs\\\\](https://x.y)]$get[x]` }")
+    assert.deepEqual(r.skipped, [])
+    // Same for a quoted string, and mixed with a plain [.
+    const quoted = fixText("module.exports = { code: '$let[x;\\[a](b)]$get[x]' }", table, { brackets: true })
+    assert.equal(quoted.text, "module.exports = { code: '$let[x;\\\\[a\\\\](b)]$get[x]' }")
+})
+
+test("--fix-brackets leaves code that does not compile alone", () => {
+    forgescript.FunctionManager.loadNative()
+    const table = FunctionTable.fromForgeScript(forgescript)
+    // $getUserVar is unknown here: ForgeScript reads $get, which needs brackets, so nothing compiles.
+    const text = "module.exports = { code: `$if[$getUserVar[x]==1;a;b] $description[[a](b)]` }"
+    const r = fixText(text, table, { brackets: true })
+    assert.equal(r.text, "module.exports = { code: `$if[$getUserVar[x]==1;a;b] $description[\\\\[a\\\\](b)]` }")
 })
 
 test("the command line writes the fixes and reports them", () => {

@@ -47,9 +47,10 @@ const path = __importStar(require("node:path"));
 const config_1 = require("./config");
 const core_2 = require("./core");
 const extract_1 = require("./extract");
-const rules_1 = require("./rules");
 const values_1 = require("./values");
 const table_1 = require("./table");
+/** This package's name, as a bot lists it among its dependencies. */
+const SELF = require("../package.json").name;
 /** Extensions of files that are read. */
 const CODE_FILE = /\.(c|m)?(j|t)s$/;
 /** Skipped at the top of the project only (`commands/docs` is still read). */
@@ -84,12 +85,9 @@ class Project {
     static load(root, options = {}) {
         root = path.resolve(root);
         const config = options.config ?? (0, config_1.loadConfig)(root).config;
-        for (const rule of Object.keys(config.rules ?? {})) {
-            if (!(rule in rules_1.Rules) && !(rule in core_2.ProjectRules)) {
-                const guess = (0, core_2.closest)(rule, [...Object.keys(rules_1.Rules), ...Object.keys(core_2.ProjectRules)]);
-                throw new config_1.ConfigError("config", `"rules" names "${rule}", which is not a rule${guess ? ` (did you mean "${guess}"?)` : ""}. See reforgiparse --rules`);
-            }
-        }
+        // A config passed in code is checked too (one read from a file already was, with its path).
+        if (options.config)
+            (0, config_1.checkRuleNames)(options.config.rules, "the config passed to Project.load");
         const properties = options.properties?.length ? options.properties : config.properties?.length ? config.properties : ["code"];
         const exclude = config.exclude ?? [];
         const include = options.include?.length ? options.include : config.include?.length ? config.include : ["."];
@@ -126,7 +124,8 @@ class Project {
         const tag = (fns, pkg) => fns.map((f) => ({ ...f, package: f.package ?? pkg }));
         // As in a bot: the extensions' functions first, then ForgeScript's own, which skips names already taken.
         for (const dep of dependencies(root)) {
-            if (dep === "@tryforge/forgescript")
+            // ReForgiParse depends on ForgeScript too, but is no extension: it has no functions to add.
+            if (dep === "@tryforge/forgescript" || dep === SELF)
                 continue;
             const dir = packageDir(root, dep);
             if (!dir || !usesForgeScript(dir))
@@ -172,7 +171,7 @@ class Project {
         const everyFile = include.length === 1 && include[0] === "." ? files : listFiles(root, root, exclude);
         const custom = everyFile.flatMap((f) => customFunctions(root, f, properties));
         for (const c of custom) {
-            const fn = customAsRaw(c);
+            const fn = { ...customAsRaw(c), description: `A custom function, in ${c.file}` };
             const i = raw.findIndex((x) => x.name.toLowerCase() === fn.name.toLowerCase());
             if (i >= 0)
                 raw[i] = fn;
@@ -265,6 +264,8 @@ function readNatives(dir, argType) {
                     unwrap: !!data.unwrap && args.length > 0,
                     deprecated: !!data.deprecated,
                     stores: (0, table_1.storesOf)(p),
+                    description: typeof data.description === "string" ? data.description : undefined,
+                    output: (0, table_1.outputNames)(data.output, argType),
                 });
             }
             else if (handler && item && typeof item.name === "string" && typeof item.register === "function")

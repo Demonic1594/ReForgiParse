@@ -10,7 +10,7 @@
 
 import { Level } from "./config"
 import { directivesIn, isSuppressed } from "./directives"
-import { CodeSource, cook, DYNAMIC, extractCode, fileOffset, lineColumn } from "./extract"
+import { CodeSource, cook, DYNAMIC, extractCode, fileOffset, lineColumn, regexCanStart, skipRegex } from "./extract"
 import { checkCode, distance, Rules, Severity } from "./rules"
 import { FunctionTable } from "./table"
 import { ValueChecker } from "./values"
@@ -159,6 +159,10 @@ function objectLiterals(text: string): ObjectLiteral[] {
             i = cook(text, i).end
             continue
         }
+        if (c === "/" && regexCanStart(text, i)) {
+            i = skipRegex(text, i)
+            continue
+        }
         if (c === "{") {
             const o: ObjectLiteral = { start: i, end: text.length, props: new Map() }
             stack.push(o)
@@ -184,8 +188,6 @@ export function closest(word: string, names: Iterable<string>): string | null {
     }
     return bestD <= Math.max(1, Math.floor(word.length / 4)) ? best : null
 }
-
-
 
 export * from "./table"
 export * from "./parser"

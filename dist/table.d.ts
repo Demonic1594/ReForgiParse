@@ -39,6 +39,10 @@ export interface IRawFunction {
         readsVariable?: boolean;
         setsEnvironment?: boolean;
     };
+    /** What it does, as its package documents it. */
+    description?: string;
+    /** The ArgType names of what it returns, when documented. */
+    output?: readonly string[];
 }
 /**
  * The functions a bot has, in the order ForgeScript registers them. A later name or alias replaces
@@ -52,7 +56,10 @@ export declare class FunctionTable {
     constructor(functions: Iterable<IRawFunction>);
     /** The function a name runs (case-insensitive, with or without `$`). */
     get(name: string): IRawFunction | undefined;
+    /** How many names and aliases call a function. */
     get size(): number;
+    /** Every function once, whatever names and aliases it has. */
+    get functions(): IRawFunction[];
     /**
      * The functions an installed ForgeScript has registered (`FunctionManager.raw`), after the bot's
      * extensions loaded theirs. Without a running bot, call `FunctionManager.loadNative()` first.
@@ -80,9 +87,13 @@ export interface IFunctionMetadata {
     }> | null;
     unwrap?: boolean;
     deprecated?: boolean;
+    description?: string;
+    output?: string | readonly string[] | null;
 }
 /** One metadata entry as the compiler sees it. */
 export declare function fromMetadata(m: IFunctionMetadata): IRawFunction;
+/** A function's documented output as ArgType names: from metadata (names) or a NativeFunction (ArgType numbers). */
+export declare function outputNames(output: unknown, argType?: Record<number, string>): string[] | undefined;
 /** An argument as a NativeFunction defines it: `type` is an ArgType number, `enum` the enum object. */
 export interface INativeArg {
     name: string;
@@ -101,6 +112,8 @@ interface ForgeScriptLike {
                 args?: INativeArg[];
                 unwrap?: boolean;
                 deprecated?: boolean;
+                description?: string;
+                output?: unknown;
             };
         } | undefined;
     };

@@ -15,8 +15,18 @@ export interface Config {
 }
 export declare const CONFIG_FILE = "reforgiparse.config.json";
 export declare class ConfigError extends Error {
-    constructor(file: string, message: string);
+    /** The config file, or a description of where the config came from. */
+    readonly file: string;
+    /** What is wrong, without the file. */
+    readonly detail: string;
+    constructor(
+    /** The config file, or a description of where the config came from. */
+    file: string, 
+    /** What is wrong, without the file. */
+    detail: string);
 }
+/** Throws a ConfigError when `rules` names something that is not a rule. */
+export declare function checkRuleNames(rules: Record<string, unknown> | undefined, where: string): void;
 /**
  * The config for a bot's folder: `file` when given, else `reforgiparse.config.json` there, else the
  * "reforgiparse" key of its package.json, else none. Throws a ConfigError for a config that cannot

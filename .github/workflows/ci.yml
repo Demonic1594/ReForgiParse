@@ -33,3 +33,27 @@ jobs:
       - run: npm ci
       - run: npm i --no-save @tryforge/forgescript@2.5.0
       - run: npm test
+
+  package:
+    # The package as a bot installs it: packed, installed from the tarball into an empty bot with
+    # ForgeScript from npm, then run. Catches what the tests cannot see from inside the repository.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm pack
+      - name: Install into an empty bot and check it
+        run: |
+          tarball="$PWD/$(ls reforgiparse-*.tgz)"
+          mkdir -p "$RUNNER_TEMP/bot/commands" && cd "$RUNNER_TEMP/bot"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund "$tarball" @tryforge/forgescript@2.8.0
+          printf 'module.exports = { name: "a", type: "messageCreate", code: "$sendMesage[$channelID;hi]" }\n' > commands/a.js
+          npx reforgiparse --version
+          out="$(npx reforgiparse 2>&1)"
+          echo "$out"
+          echo "$out" | grep -q "Did you mean \$sendMessage?"
+          if echo "$out" | grep -q "^note:"; then echo "unexpected note"; exit 1; fi
+          node -e 'if (typeof require("reforgiparse/core").checkScript !== "function") process.exit(1)'

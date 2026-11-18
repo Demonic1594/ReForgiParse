@@ -27,6 +27,14 @@ interface Cooked {
 /** Reads the string or template literal whose opening quote is at `text[i]`, as JavaScript would. */
 export declare function cook(text: string, i: number): Cooked;
 /**
+ * Whether a `/` at `text[i]` (not a comment) starts a regular expression literal, judged as
+ * JavaScript's grammar does in practice: after a value (a name, number, string, `)` or `]`) it is a
+ * division; after an operator, punctuation, a keyword such as `return`, or nothing, a regex.
+ */
+export declare function regexCanStart(text: string, i: number, from?: number): boolean;
+/** The end of the regular expression literal starting at `text[i]`, past its flags. */
+export declare function skipRegex(text: string, i: number): number;
+/**
  * Every string value of the given properties (default `code`) in a JavaScript or TypeScript file,
  * as ForgeScript receives it, with where each character comes from. Comments and other strings are
  * skipped, so `code:` inside them does not count.

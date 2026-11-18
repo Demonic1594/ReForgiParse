@@ -38,18 +38,39 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigError = exports.CONFIG_FILE = void 0;
+exports.checkRuleNames = checkRuleNames;
 exports.loadConfig = loadConfig;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
+const core_1 = require("./core");
+const rules_1 = require("./rules");
 exports.CONFIG_FILE = "reforgiparse.config.json";
 const LEVELS = new Set(["error", "warning", "info", "off"]);
 class ConfigError extends Error {
-    constructor(file, message) {
-        super(`${file}: ${message}`);
+    file;
+    detail;
+    constructor(
+    /** The config file, or a description of where the config came from. */
+    file, 
+    /** What is wrong, without the file. */
+    detail) {
+        super(`${file}: ${detail}`);
+        this.file = file;
+        this.detail = detail;
         this.name = "ConfigError";
     }
 }
 exports.ConfigError = ConfigError;
+/** Throws a ConfigError when `rules` names something that is not a rule. */
+function checkRuleNames(rules, where) {
+    const names = [...Object.keys(rules_1.Rules), ...Object.keys(core_1.ProjectRules)];
+    for (const rule of Object.keys(rules ?? {})) {
+        if (names.includes(rule))
+            continue;
+        const guess = (0, core_1.closest)(rule, names);
+        throw new ConfigError(where, `"rules" names "${rule}", which is not a rule${guess ? ` (did you mean "${guess}"?)` : ""}. See reforgiparse --rules`);
+    }
+}
 /**
  * The config for a bot's folder: `file` when given, else `reforgiparse.config.json` there, else the
  * "reforgiparse" key of its package.json, else none. Throws a ConfigError for a config that cannot
@@ -124,6 +145,7 @@ function validate(raw, where) {
     if (rules !== undefined) {
         if (!rules || typeof rules !== "object" || Array.isArray(rules))
             throw new ConfigError(where, `"rules" must be an object of rule names and levels`);
+        checkRuleNames(rules, where);
         for (const [name, level] of Object.entries(rules)) {
             if (typeof level !== "string" || !LEVELS.has(level))
                 throw new ConfigError(where, `rule "${name}" must be "error", "warning", "info" or "off", not ${JSON.stringify(level)}`);

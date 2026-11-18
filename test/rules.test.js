@@ -78,3 +78,23 @@ test("without ForgeScript's resolvers, the built-in rules give the same answer f
         }
     }
 })
+
+test("a name that only compiles as a shorter function needing brackets is one error, with the likely name", () => {
+    const found = checkCode("$authorI", table, { values })
+    assert.deepEqual(found.map((f) => f.rule), ["missing-brackets"])
+    assert.match(found[0].message, /^\$authorI is not a function here: ForgeScript reads \$author, which requires brackets, so the code does not compile\. Did you mean \$authorID\? Usage: \$author\[/)
+    // A glued name that compiles is still a warning of its own.
+    assert.deepEqual(rules("$pingms"), ["glued-name"])
+})
+
+test("brackets are not reported where a compile error decides how the rest is read", () => {
+    // $getUserVar is unknown here: ForgeScript reads $get, which needs brackets, so nothing compiles.
+    // Where the [ and ] around x belong is then a guess, and escaping them would change the code.
+    assert.deepEqual(rules("$if[$getUserVar[x]==1;a;b]"), ["missing-brackets"])
+    // A call that contains no error is still checked.
+    assert.ok(rules("$get $description[[a](b)]").includes("unescaped-bracket"))
+})
+
+test("an empty argument is called empty", () => {
+    assert.match(messages("$sendMessage[;hi]", "invalid-argument")[0], /^\$sendMessage: "channel ID" is empty, but must be an ID \(16 to 23 digits\)\. ForgeScript stops the command: "Given value  for argument channel ID is not of type Channel"$/)
+})

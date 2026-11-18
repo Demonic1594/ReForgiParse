@@ -96,6 +96,20 @@ function sameMeaning(a, b) {
     const errors = (r) => r.errors.map((e) => [e.kind, e.message, e.line, e.column]);
     return JSON.stringify([a.code, a.functions.map(call), errors(a)]) === JSON.stringify([b.code, b.functions.map(call), errors(b)]);
 }
+/**
+ * What makes the bracket at `value[i]` reach ForgeScript escaped: `\\` before it when it is written
+ * as itself (`\\` in a JavaScript string is one backslash), or one more `\` when it is written `\[`,
+ * which JavaScript reads as a plain `[`. `null` for any other spelling (`\x5B`, say).
+ */
+function backslashFor(text, src, i) {
+    const plain = plainSpan(text, src, i, i + 1);
+    if (plain !== null)
+        return { at: plain, insert: "\\\\" };
+    const at = src.offsets[i];
+    if (text[at] === "\\" && text[at + 1] === src.value[i] && src.offsets[i + 1] !== at)
+        return { at, insert: "\\" };
+    return null;
+}
 function fixBrackets(text, table, properties, fixes, skipped) {
     const tried = new Set();
     for (let round = 0; round < 500; round++) {
@@ -107,16 +121,15 @@ function fixBrackets(text, table, properties, fixes, skipped) {
                 if (tried.has(key))
                     continue;
                 tried.add(key);
-                const positions = [...item.opens, item.close].map((i) => plainSpan(text, src, i, i + 1));
+                const edits = [...item.opens, item.close].map((i) => backslashFor(text, src, i));
                 const fix = { rule: "unescaped-bracket", offset: src.offsets[item.close], description: `escaped the [ ] in ${item.call.name}'s text` };
-                if (positions.some((p) => p === null)) {
+                if (edits.some((e) => e === null)) {
                     skipped.push({ ...fix, description: `${fix.description}: a bracket is written with escapes in the file` });
                     continue;
                 }
-                // \\ in a JavaScript string is one backslash, which ForgeScript reads as an escape.
                 let next = text;
-                for (const p of positions.sort((a, b) => b - a))
-                    next = next.slice(0, p) + "\\\\" + next.slice(p);
+                for (const e of edits.sort((x, y) => y.at - x.at))
+                    next = next.slice(0, e.at) + e.insert + next.slice(e.at);
                 const after = (0, extract_1.extractCode)(next, properties).find((s) => s.start === src.start);
                 const now = after && (0, parser_1.parse)(after.value, table, { recover: true });
                 const better = now && now.errors.length <= res.errors.length && (0, rules_1.unescapedBrackets)(after.value, now).length < (0, rules_1.unescapedBrackets)(src.value, res).length;

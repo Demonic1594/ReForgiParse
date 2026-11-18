@@ -138,6 +138,10 @@ function objectLiterals(text) {
             i = (0, extract_1.cook)(text, i).end;
             continue;
         }
+        if (c === "/" && (0, extract_1.regexCanStart)(text, i)) {
+            i = (0, extract_1.skipRegex)(text, i);
+            continue;
+        }
         if (c === "{") {
             const o = { start: i, end: text.length, props: new Map() };
             stack.push(o);
