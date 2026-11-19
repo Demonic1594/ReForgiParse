@@ -60,6 +60,14 @@ export declare const Rules: {
         readonly severity: "warning";
         readonly description: "A condition that is false whatever the values: spaces around `==`, a word compared with `<`, `$isBot==True`, or spaces around a condition with no operator.";
     };
+    readonly "constant-condition": {
+        readonly severity: "info";
+        readonly description: "A condition with fixed text on each side (`$if[1==1;...]`, `$if[false;...]`): always true or always false, so one branch never runs.";
+    };
+    readonly "unreachable-code": {
+        readonly severity: "warning";
+        readonly description: "Code after `$stop`, `$break`, `$continue` or `$return` in the same block (or in an argument before it): it never runs.";
+    };
     readonly "unescaped-bracket": {
         readonly severity: "warning";
         readonly description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed.";
@@ -129,10 +137,12 @@ export interface CheckOptions {
 /** What an event gives a command's code, read from ForgeScript's handler for it. */
 export interface EventModel {
     name: string;
-    /** An interaction (interactionCreate). */
+    /** The packages with an event of this name: `@tryforge/forgescript`, or an extension. */
+    packages: readonly string[];
+    /** An interaction (interactionCreate), or maybe one (an extension's event). */
     interaction: boolean;
-    /** The states it sets: `message`, `member`, ... */
-    states: ReadonlySet<string>;
+    /** The states it sets: `message`, `member`, ... `null` when they cannot be read from its source. */
+    states: ReadonlySet<string> | null;
     /** A message command's words ($message). */
     words: boolean;
 }

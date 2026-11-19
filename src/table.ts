@@ -56,7 +56,15 @@ export interface IRawFunction {
      * event's states (`message`, `member`...), or a message command's words. Without it, the function
      * gives nothing (see test/runtime.test.js).
      */
-    context?: { interaction?: boolean; state?: string; words?: boolean }
+    context?: {
+        interaction?: boolean
+        state?: string
+        words?: boolean
+        /** Only its own package's events' data (`ctx.runtime.extras`, a giveaway's states): `$voteUserID`. */
+        event?: boolean
+        /** The error ForgeScript stops the command with when there is none, if it does. */
+        crash?: string
+    }
     /** What it does, as its package documents it. */
     description?: string
     /** The ArgType names of what it returns, when documented. */
@@ -270,6 +278,20 @@ export function contextOf(file: string | undefined, name: string): IRawFunction[
     const states = new Set([...body.matchAll(/ctx\.states\??\.([a-zA-Z]+)/g)].map((m) => m[1]))
     if (states.size === 1) return { state: [...states][0] }
     return undefined
+}
+
+/**
+ * Whether an extension's NativeFunction reads only the data its package's events give a command
+ * (`ctx.runtime.extras`, or `ctx.extendedStates`), with nothing else to fall back on: from its source.
+ */
+export function eventDataOf(text: string): IRawFunction["context"] {
+    const body = text.slice(Math.max(0, text.indexOf("execute(")))
+    const extras = /ctx\.runtime\.extras/.test(body)
+    if (!extras && !/ctx\.extendedStates/.test(body)) return undefined
+    const kinds = new Set([...body.matchAll(/ctx\??\.([a-zA-Z]+)/g)].map((m) => m[1]))
+    if (![...kinds].every((k) => ["runtime", "extendedStates", "noop", "client", "getExtension", "container"].includes(k))) return undefined
+    const crash = /ctx\.runtime\.extras\.([A-Za-z_$][\w$]*)/.exec(body)
+    return { event: true, crash: crash ? `TypeError: Cannot read properties of undefined (reading '${crash[1]}')` : undefined }
 }
 
 /** A NativeFunction's argument, described by name. */

@@ -7,6 +7,7 @@ export interface ValueProblem {
     message: string;
 }
 interface ForgeScriptValues {
+    Conditions?: Record<string, (lhs: string, rhs: string | null) => boolean>;
     CompiledFunction?: {
         prototype: Record<string, any>;
         IdRegex?: RegExp;
@@ -21,6 +22,7 @@ export declare class ValueChecker {
     private readonly cdnRegex;
     private readonly parseEmoji;
     private readonly colors;
+    private readonly conditions;
     /** @param forgescript The bot's installed ForgeScript module, for its exact resolvers. Without it, a built-in copy of the 2.8.0 rules is used. */
     constructor(forgescript?: ForgeScriptValues | null, discord?: {
         Colors?: Record<string, number>;
@@ -28,6 +30,8 @@ export declare class ValueChecker {
             id?: string | null;
         } | null;
     } | null);
+    /** What ForgeScript's `Conditions` (core/Compiler.js) gives for fixed text: `null` without ForgeScript. */
+    condition(op: string, lhs: string, rhs: string | null): boolean | null;
     /**
      * Checks one literal argument. `text` is the argument after escapes, as ForgeScript resolves it.
      * Follows CompiledFunction.resolveArg: an optional argument left empty is not resolved at all.

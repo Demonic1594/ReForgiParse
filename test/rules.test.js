@@ -28,6 +28,14 @@ const CASES = {
         bad: ["$if[$get[a] == 1;x;y]", "$if[$get[a]!= 1;x;y]", "$if[\n$get[a]==1;x;y]", "$if[ true ;x;y]", "$if[\n$isBot\n;x;y]", "$if[$isBot==True;x;y]", "$if[yes!=$isBot;x;y]", "$if[$get[a]>abc;x;y]", "$if[$isBot>0;x;y]", "$if[$ping;x;y]", "$onlyIf[$get[a] == 1;no]", "$and[$get[a] == 1;1==1]", "$switch[$get[a];$case[ 1 ;x]]", "$switch[\n$get[a]\n;$case[1;x]]"],
         good: ["$if[$get[a]==1;x;y]", "$if[$isBot==true;x;y]", "$if[$isBot!=false;x;y]", "$if[$isBot;x;y]", "$if[$get[a]>=5;x;y]", "$if[$get[a]> 5;x;y]", "$if[$ping>0;x;y]", "$if[$get[a]==;x;y]", "$if[$!isBot==x;x;y]", "$if[a b==a b;x;y]", "$if[$get[a]==1;\n  x\n;y]", "$switch[$get[a];\n  $case[1;x]\n  $case[default;y]\n]"],
     },
+    "constant-condition": {
+        bad: ["$if[1==1;x;y]", "$if[false;x;y]", "$if[true;x;y]", "$onlyIf[a!=b;no]", "$if[2>10;x;y]", "$if[==;x;y]", "$and[1==1;$authorID==1]", "$if[\\$x==\\$x;x;y]"],
+        good: ["$if[$get[a]==1;x;y]", "$while[true;$break]", "$if[$authorID==1;x;y]", "$if[1==$get[a];x;y]"],
+    },
+    "unreachable-code": {
+        bad: ["a$stop b", "$loop[2;$break$ping]", "$loop[2;$continue x]", "$let[x;$stop]$ping", "$let[x;$sum[1;$stop]]b", "$if[$authorID==1;a$stop b;c]", "$try[$stop x;y]"],
+        good: ["a$stop", "$stop\n", "$stop$c[why]", "$if[$authorID==1;$stop]rest", "$try[$stop;y]z", "$escapeCode[$stop x]", "$c[$stop x]", "$loop[2;$if[$authorID==1;$break]x]", "$!stop"],
+    },
     "unescaped-bracket": { bad: ["$description[[Docs](https://x.y)]"], good: ["$description[\\[Docs\\](https://x.y)]", "$description[a]"] },
     "escaped-letter": { bad: ["$description[line\\nnext]"], good: ["$description[line\nnext]", "$description[a\\;b]"] },
     "misplaced-operator": { bad: ["$#!ping", "$!$ping"], good: ["$!#ping", "$!ping", "$#ping", "$@[,]ping"] },
@@ -125,7 +133,7 @@ test("one mistake is one finding: no argument value or variable noise around it"
     assert.ok(!rules("$let[;1]").includes("unused-variable"))
     // The ] left over when a [ in text closed a function early is part of that one mistake.
     assert.deepEqual(rules("$description[[Docs](https://x.y)]"), ["unescaped-bracket"])
-    assert.deepEqual(rules("$if[1==1;$description[[a](b)];no]"), ["unescaped-bracket"])
+    assert.deepEqual(rules("$if[$authorID==1;$description[[a](b)];no]"), ["unescaped-bracket"])
     // Only the ] that mistake leaves over: another stray ] in the same code is still reported.
     assert.deepEqual(rules("$description[[a](b)]\n$let[a;1]$get[a]]"), ["unescaped-bracket", "stray-bracket"])
     assert.deepEqual(rules("$description[[a][b](c)]"), ["unescaped-bracket"])

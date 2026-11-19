@@ -40,6 +40,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Project = exports.ProjectRules = void 0;
 exports.readNatives = readNatives;
 exports.forgeScriptEventModel = forgeScriptEventModel;
+exports.scanExtension = scanExtension;
 exports.customAsRaw = customAsRaw;
 var core_1 = require("./core");
 Object.defineProperty(exports, "ProjectRules", { enumerable: true, get: function () { return core_1.ProjectRules; } });
@@ -101,6 +102,8 @@ class Project {
         const raw = [];
         const seen = new Set();
         const extensionEvents = [];
+        // Each extension's folder and events: what its events give a command, and its functions read.
+        const extensions = [];
         let events = null;
         const add = (fns, source) => {
             let n = 0;
@@ -139,6 +142,7 @@ class Project {
                 // No metadata (the official extensions on npm): read its NativeFunction files instead.
                 const natives = readNatives(dir, forgescript?.ArgType);
                 extensionEvents.push(...natives.events);
+                extensions.push({ name: dep, dir, events: natives.events });
                 for (const f of natives.failures)
                     notes.push(`${dep}: ${f}`);
                 if (natives.functions.length)
@@ -148,8 +152,9 @@ class Project {
                 continue;
             }
             const ev = readJson(path.join(dir, "metadata", "events.json"));
-            if (Array.isArray(ev))
-                extensionEvents.push(...ev.map((e) => (typeof e === "string" ? e : e.name ?? "")));
+            const evNames = Array.isArray(ev) ? ev.map((e) => (typeof e === "string" ? e : e.name ?? "")).filter(Boolean) : [];
+            extensionEvents.push(...evNames);
+            extensions.push({ name: dep, dir, events: evNames });
             try {
                 const list = JSON.parse(fs.readFileSync(meta, "utf8"));
                 add(tag(list.map(table_1.fromMetadata), dep), { name: dep, version: version(dir), functions: 0 });
@@ -203,6 +208,19 @@ class Project {
         }
         const values = new values_1.ValueChecker(forgescript, discord);
         const eventModel = forgeDir ? forgeScriptEventModel(forgeDir) : null;
+        for (const ext of extensions) {
+            const scan = scanExtension(ext.dir);
+            for (const f of raw)
+                if (f.package === ext.name && !f.context)
+                    f.context = scan.functions.get(f.name.toLowerCase());
+            if (!eventModel)
+                continue;
+            for (const name of ext.events) {
+                const mine = { name, packages: [ext.name], interaction: true, states: scan.states, words: scan.words };
+                const other = eventModel.get(name);
+                eventModel.set(name, other ? mergeEvents(other, mine) : mine);
+            }
+        }
         return new Project(root, files, properties, config, { table: new table_1.FunctionTable(raw), sources, custom, notes, events, values, eventModel });
     }
     /** Checks every file. */
@@ -305,9 +323,101 @@ function forgeScriptEventModel(forgeDir) {
         for (const m of block.matchAll(/^ {20}([a-zA-Z]+): \{/gm))
             states.add(m[1]);
         const args = /\bargs(:\s*([^,\n]+))?,/.exec(text);
-        out.set(name, { name, interaction: name === "interactionCreate", states, words: !!args && args[2]?.trim() !== "[]" });
+        out.set(name, { name, packages: ["@tryforge/forgescript"], interaction: name === "interactionCreate", states, words: !!args && args[2]?.trim() !== "[]" });
     }
     return out;
+}
+/** Two events of one name, from two packages: what either may give. */
+function mergeEvents(a, b) {
+    return {
+        name: a.name,
+        packages: [...a.packages, ...b.packages],
+        interaction: a.interaction || b.interaction,
+        states: a.states && b.states ? new Set([...a.states, ...b.states]) : null,
+        words: a.words || b.words,
+    };
+}
+/**
+ * What an extension's events give a command, and what its functions read, from its source:
+ * - the states its code passes when it runs a command (`states: { giveaway: ... }`), `null` when one is
+ *   not written out where it is passed;
+ * - whether it passes a message command's words (`args`);
+ * - its functions that read only its own events' data ({@link eventDataOf}).
+ */
+function scanExtension(dir) {
+    let states = new Set();
+    let words = false;
+    const functions = new Map();
+    const visit = (d) => {
+        let entries = [];
+        try {
+            entries = fs.readdirSync(d, { withFileTypes: true });
+        }
+        catch {
+            return;
+        }
+        for (const e of entries) {
+            const p = path.join(d, e.name);
+            if (e.isDirectory()) {
+                if (e.name !== "node_modules" && !e.name.startsWith("."))
+                    visit(p);
+                continue;
+            }
+            if (!/\.c?js$/.test(e.name))
+                continue;
+            const text = fs.readFileSync(p, "utf8");
+            if (text.includes("NativeFunction")) {
+                const name = /\bname:\s*["'](\$[A-Za-z0-9_]+)["']/.exec(text)?.[1];
+                const context = name ? (0, table_1.eventDataOf)(text) : undefined;
+                if (name && context)
+                    functions.set(name.toLowerCase(), context);
+                continue;
+            }
+            if (!/Interpreter\.run\(|Context\(/.test(text))
+                continue;
+            for (const m of text.matchAll(/(?<![\w.$])states\s*([:,}\n])/g)) {
+                if (!states)
+                    break;
+                const after = text.slice(m.index + m[0].length);
+                if (m[1] !== ":" || !/^\s*\{/.test(after)) {
+                    states = null;
+                    break;
+                }
+                const keys = objectKeys(after.slice(after.indexOf("{")));
+                if (keys)
+                    for (const k of keys)
+                        states.add(k);
+                else
+                    states = null;
+            }
+            if (/(?<![\w.$])args\s*[:,}]/.test(text))
+                words = true;
+        }
+    };
+    visit(fs.existsSync(path.join(dir, "dist")) ? path.join(dir, "dist") : dir);
+    return { states, words, functions };
+}
+/** The keys of the object literal `text` starts with, `null` when one is not a plain name (a spread...). */
+function objectKeys(text) {
+    const keys = [];
+    let depth = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === "{" || c === "[" || c === "(")
+            depth++;
+        else if (c === "}" || c === "]" || c === ")") {
+            if (--depth === 0)
+                return keys;
+        }
+        else if (depth === 1 && /[A-Za-z_$.]/.test(c) && /[{,]\s*$/.test(text.slice(0, i))) {
+            const m = /^([A-Za-z_$][\w$]*)\s*[:,}]/.exec(text.slice(i));
+            if (!m)
+                return null;
+            keys.push(m[1]);
+            i += m[1].length - 1;
+        }
+    }
+    return null;
 }
 /** The events ForgeScript has: the handler files in its `handlers/events` folder. */
 function forgeScriptEvents(forgeDir) {

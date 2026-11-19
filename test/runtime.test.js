@@ -225,6 +225,20 @@ test("condition-value: these conditions are false (or true for !=) whatever the 
     assert.equal((await run("$let[a;1]$switch[$get[a];$case[1;T]$case[default;F]]")).output, "T")
 })
 
+test("unreachable-code: what follows $stop, $break, $continue or $return in its block never runs", async () => {
+    for (const [code, output] of [["$loop[2;a$break x]y", "y"], ["$loop[2;$continue x]y", "y"], ["$try[a$stop b;c]d", "cd"], ["$try[a$let[v;$stop]b;c]d", "cd"]]) {
+        finding(code, "unreachable-code")
+        assert.equal((await run(code)).output, output, code)
+    }
+})
+
+test("constant-condition: the result it states is ForgeScript's, every time", async () => {
+    for (const code of ["$if[1==1;T;F]", "$if[false;T;F]", "$if[true;T;F]", "$if[2>10;T;F]", "$if[10>=2;T;F]", "$if[a!=b;T;F]", "$if[==;T;F]", "$if[1e3==1000;T;F]", "$if[1e3>=1000;T;F]"]) {
+        const f = finding(code, "constant-condition")
+        assert.equal((await run(code)).output, / always true/.test(f.message) ? "T" : "F", code)
+    }
+})
+
 test("unescaped-bracket: the first ] closes the function and the rest is printed", async () => {
     finding("$let[x;[Docs](u)]$get[x]", "unescaped-bracket")
     assert.equal((await run("$let[x;[Docs](u)]$get[x]")).output, "(u)][Docs")
@@ -305,4 +319,32 @@ test("directives: $c[reforgiparse-...] prints nothing, wherever it is", async ()
 test("--reindent leaves conditions alone: whitespace in a condition is compared", async () => {
     assert.equal((await run("$if[1==1;yes;no]")).output, "yes")
     assert.equal((await run("$if[\n      1==1;yes;no]")).output, "no")
+})
+
+test("missing-context: an extension's event-data function in another event's command (no extras)", async () => {
+    const path = require("node:path")
+    quiet(() => forgescript.FunctionManager.load("fixture", path.join(__dirname, "fixtures", "event-extension", "dist", "functions")))
+    assert.deepEqual(await run("a$fixtureVoteUser|"), { output: "a|", error: null, color: undefined })
+    // The message quotes this error (test/project.test.js).
+    assert.equal((await run("a$fixtureOldValue|")).error, "[ERROR] TypeError: Cannot read properties of undefined (reading 'oldValue')")
+    // ForgeScript's $message with no words, as in an extension's event (it passes no args): nothing.
+    assert.equal((await run("a$message|")).output, "a|")
+})
+
+test("unreachable-code: no call in a reported range runs", async () => {
+    const ran = []
+    const { NativeFunction, ArgType, FunctionManager } = forgescript
+    quiet(() => FunctionManager.add(new NativeFunction({ name: "$fixtureMark", description: "", unwrap: true, brackets: true, args: [{ name: "n", description: "", type: ArgType.String, required: true, rest: false }], execute(ctx, [n]) {
+        ran.push(n)
+        return this.success()
+    } })))
+    const marked = FunctionTable.fromForgeScript(forgescript)
+    for (const code of ["$fixtureMark[1]$stop$fixtureMark[2]", "$loop[2;$fixtureMark[1]$break$fixtureMark[2]]$fixtureMark[3]", "$loop[2;$continue$fixtureMark[2]]", "$try[$let[x;$sum[1;$stop]]$fixtureMark[2];$fixtureMark[3]]", "$if[1==1;$scope[$stop$fixtureMark[2]]]", "$return[r]$fixtureMark[2]"]) {
+        ran.length = 0
+        const found = checkCode(code, marked, { customFunction: true }).filter((f) => f.rule === "unreachable-code")
+        assert.ok(found.length, code)
+        await run(code)
+        for (const f of found) for (const m of code.slice(f.start, f.end).matchAll(/\$fixtureMark\[(\d+)\]/g)) assert.ok(!ran.includes(m[1]), `${code}: ${m[0]} ran`)
+        assert.ok(!ran.includes("2"), code)
+    }
 })

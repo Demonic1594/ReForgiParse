@@ -11,6 +11,7 @@ exports.outputNames = outputNames;
 exports.storesOf = storesOf;
 exports.resolvedArgsOf = resolvedArgsOf;
 exports.contextOf = contextOf;
+exports.eventDataOf = eventDataOf;
 exports.paramFromNative = paramFromNative;
 exports.withParams = withParams;
 exports.usage = usage;
@@ -201,6 +202,21 @@ function contextOf(file, name) {
     if (states.size === 1)
         return { state: [...states][0] };
     return undefined;
+}
+/**
+ * Whether an extension's NativeFunction reads only the data its package's events give a command
+ * (`ctx.runtime.extras`, or `ctx.extendedStates`), with nothing else to fall back on: from its source.
+ */
+function eventDataOf(text) {
+    const body = text.slice(Math.max(0, text.indexOf("execute(")));
+    const extras = /ctx\.runtime\.extras/.test(body);
+    if (!extras && !/ctx\.extendedStates/.test(body))
+        return undefined;
+    const kinds = new Set([...body.matchAll(/ctx\??\.([a-zA-Z]+)/g)].map((m) => m[1]));
+    if (![...kinds].every((k) => ["runtime", "extendedStates", "noop", "client", "getExtension", "container"].includes(k)))
+        return undefined;
+    const crash = /ctx\.runtime\.extras\.([A-Za-z_$][\w$]*)/.exec(body);
+    return { event: true, crash: crash ? `TypeError: Cannot read properties of undefined (reading '${crash[1]}')` : undefined };
 }
 /** A NativeFunction's argument, described by name. */
 function paramFromNative(a, argType) {
