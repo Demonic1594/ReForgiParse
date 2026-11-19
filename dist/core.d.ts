@@ -1,5 +1,5 @@
 import { Level } from "./config";
-import { Severity } from "./rules";
+import { EventModel, Severity } from "./rules";
 import { FunctionTable } from "./table";
 import { ValueChecker } from "./values";
 /** One problem, at a place in a file. */
@@ -43,6 +43,8 @@ export interface ScriptOptions {
     events?: ReadonlySet<string> | null;
     /** Levels from the config: `error`, `warning`, `info` or `off` per rule. */
     rules?: Record<string, Level>;
+    /** What each event gives a command's code, to check functions against the command's `type`. */
+    eventModel?: ReadonlyMap<string, EventModel> | null;
 }
 /** Every problem in one JavaScript or TypeScript file's text, with directives and levels applied. */
 export declare function checkScript(text: string, table: FunctionTable, options?: ScriptOptions): Diagnostic[];

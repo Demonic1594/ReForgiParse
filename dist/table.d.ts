@@ -47,6 +47,16 @@ export interface IRawFunction {
      * does, read from its source. `undefined` when unknown.
      */
     resolved?: readonly number[];
+    /**
+     * What it reads from its command's event, read from its source: only the interaction, one of the
+     * event's states (`message`, `member`...), or a message command's words. Without it, the function
+     * gives nothing (see test/runtime.test.js).
+     */
+    context?: {
+        interaction?: boolean;
+        state?: string;
+        words?: boolean;
+    };
     /** What it does, as its package documents it. */
     description?: string;
     /** The ArgType names of what it returns, when documented. */
@@ -137,6 +147,8 @@ export declare function storesOf(file: string | undefined): IRawFunction["stores
  * `resolveArgs(ctx)`. `undefined` when the source cannot be read.
  */
 export declare function resolvedArgsOf(file: string | undefined, count: number): number[] | undefined;
+/** What a NativeFunction reads from its command's event: see {@link IRawFunction.context}. */
+export declare function contextOf(file: string | undefined, name: string): IRawFunction["context"];
 /** A NativeFunction's argument, described by name. */
 export declare function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam;
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */

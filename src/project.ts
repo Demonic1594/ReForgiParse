@@ -10,6 +10,7 @@ import * as path from "node:path"
 import { checkRuleNames, Config, loadConfig } from "./config"
 import { checkScript, Diagnostic } from "./core"
 import { extractCode } from "./extract"
+import { EventModel } from "./rules"
 import { ValueChecker } from "./values"
 import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, outputNames, paramFromNative, resolvedArgsOf, storesOf, withParams } from "./table"
 
@@ -57,14 +58,17 @@ export class Project {
     readonly values: ValueChecker
     /** Event names a command's `type` can be, `null` when ForgeScript's could not be read. */
     readonly events: Set<string> | null
+    /** What each of ForgeScript's events gives a command's code, read from its handlers. */
+    readonly eventModel: Map<string, EventModel> | null
 
     private constructor(
         readonly root: string,
         readonly files: string[],
         readonly properties: string[],
         readonly config: Config,
-        loaded: { table: FunctionTable; sources: FunctionSource[]; custom: CustomFunction[]; notes: string[]; events: Set<string> | null; values: ValueChecker },
+        loaded: { table: FunctionTable; sources: FunctionSource[]; custom: CustomFunction[]; notes: string[]; events: Set<string> | null; values: ValueChecker; eventModel: Map<string, EventModel> | null },
     ) {
+        this.eventModel = loaded.eventModel
         this.values = loaded.values
         this.events = loaded.events
         this.table = loaded.table
@@ -172,7 +176,8 @@ export class Project {
             // Colour names are then not known: only hex and numbers are taken as colours.
         }
         const values = new ValueChecker(forgescript, discord)
-        return new Project(root, files, properties, config, { table: new FunctionTable(raw), sources, custom, notes, events, values })
+        const eventModel = forgeDir ? forgeScriptEventModel(forgeDir) : null
+        return new Project(root, files, properties, config, { table: new FunctionTable(raw), sources, custom, notes, events, values, eventModel })
     }
 
     /** Checks every file. */
@@ -184,7 +189,7 @@ export class Project {
     checkFile(file: string): Diagnostic[] {
         const abs = path.resolve(this.root, file)
         const rel = path.relative(this.root, abs).split(path.sep).join("/")
-        return checkScript(fs.readFileSync(abs, "utf8"), this.table, { file: rel, properties: this.properties, values: this.values, events: this.events, rules: this.config.rules })
+        return checkScript(fs.readFileSync(abs, "utf8"), this.table, { file: rel, properties: this.properties, values: this.values, events: this.events, rules: this.config.rules, eventModel: this.eventModel })
     }
 }
 
@@ -245,6 +250,29 @@ export function readNatives(dir: string, argType?: Record<number, string>): { fu
     }
     visit(fs.existsSync(path.join(dir, "dist")) ? path.join(dir, "dist") : dir)
     return { functions, events, failures }
+}
+
+/**
+ * What each of ForgeScript's events gives a command's code, from its handler's source: the states it
+ * sets (`states: { message: ... }`), whether it gives message words (`args` other than `[]`), and an
+ * interaction (interactionCreate, whose handler runs commands with the interaction).
+ */
+export function forgeScriptEventModel(forgeDir: string): Map<string, EventModel> | null {
+    const dir = path.join(forgeDir, "dist", "handlers", "events")
+    if (!fs.existsSync(dir)) return null
+    const out = new Map<string, EventModel>()
+    for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith(".js")) continue
+        const text = fs.readFileSync(path.join(dir, f), "utf8")
+        const name = /name: "([A-Za-z]+)"/.exec(text)?.[1]
+        if (!name) continue
+        const states = new Set<string>()
+        const block = /states: \{([\s\S]*?)\n {16}\},/.exec(text)?.[1] ?? ""
+        for (const m of block.matchAll(/^ {20}([a-zA-Z]+): \{/gm)) states.add(m[1])
+        const args = /\bargs(:\s*([^,\n]+))?,/.exec(text)
+        out.set(name, { name, interaction: name === "interactionCreate", states, words: !!args && args[2]?.trim() !== "[]" })
+    }
+    return out
 }
 
 /** The events ForgeScript has: the handler files in its `handlers/events` folder. */

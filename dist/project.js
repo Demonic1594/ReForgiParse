@@ -39,6 +39,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Project = exports.ProjectRules = void 0;
 exports.readNatives = readNatives;
+exports.forgeScriptEventModel = forgeScriptEventModel;
 exports.customAsRaw = customAsRaw;
 var core_1 = require("./core");
 Object.defineProperty(exports, "ProjectRules", { enumerable: true, get: function () { return core_1.ProjectRules; } });
@@ -69,11 +70,14 @@ class Project {
     values;
     /** Event names a command's `type` can be, `null` when ForgeScript's could not be read. */
     events;
+    /** What each of ForgeScript's events gives a command's code, read from its handlers. */
+    eventModel;
     constructor(root, files, properties, config, loaded) {
         this.root = root;
         this.files = files;
         this.properties = properties;
         this.config = config;
+        this.eventModel = loaded.eventModel;
         this.values = loaded.values;
         this.events = loaded.events;
         this.table = loaded.table;
@@ -198,7 +202,8 @@ class Project {
             // Colour names are then not known: only hex and numbers are taken as colours.
         }
         const values = new values_1.ValueChecker(forgescript, discord);
-        return new Project(root, files, properties, config, { table: new table_1.FunctionTable(raw), sources, custom, notes, events, values });
+        const eventModel = forgeDir ? forgeScriptEventModel(forgeDir) : null;
+        return new Project(root, files, properties, config, { table: new table_1.FunctionTable(raw), sources, custom, notes, events, values, eventModel });
     }
     /** Checks every file. */
     check() {
@@ -208,7 +213,7 @@ class Project {
     checkFile(file) {
         const abs = path.resolve(this.root, file);
         const rel = path.relative(this.root, abs).split(path.sep).join("/");
-        return (0, core_2.checkScript)(fs.readFileSync(abs, "utf8"), this.table, { file: rel, properties: this.properties, values: this.values, events: this.events, rules: this.config.rules });
+        return (0, core_2.checkScript)(fs.readFileSync(abs, "utf8"), this.table, { file: rel, properties: this.properties, values: this.values, events: this.events, rules: this.config.rules, eventModel: this.eventModel });
     }
 }
 exports.Project = Project;
@@ -277,6 +282,32 @@ function readNatives(dir, argType) {
     };
     visit(fs.existsSync(path.join(dir, "dist")) ? path.join(dir, "dist") : dir);
     return { functions, events, failures };
+}
+/**
+ * What each of ForgeScript's events gives a command's code, from its handler's source: the states it
+ * sets (`states: { message: ... }`), whether it gives message words (`args` other than `[]`), and an
+ * interaction (interactionCreate, whose handler runs commands with the interaction).
+ */
+function forgeScriptEventModel(forgeDir) {
+    const dir = path.join(forgeDir, "dist", "handlers", "events");
+    if (!fs.existsSync(dir))
+        return null;
+    const out = new Map();
+    for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith(".js"))
+            continue;
+        const text = fs.readFileSync(path.join(dir, f), "utf8");
+        const name = /name: "([A-Za-z]+)"/.exec(text)?.[1];
+        if (!name)
+            continue;
+        const states = new Set();
+        const block = /states: \{([\s\S]*?)\n {16}\},/.exec(text)?.[1] ?? "";
+        for (const m of block.matchAll(/^ {20}([a-zA-Z]+): \{/gm))
+            states.add(m[1]);
+        const args = /\bargs(:\s*([^,\n]+))?,/.exec(text);
+        out.set(name, { name, interaction: name === "interactionCreate", states, words: !!args && args[2]?.trim() !== "[]" });
+    }
+    return out;
 }
 /** The events ForgeScript has: the handler files in its `handlers/events` folder. */
 function forgeScriptEvents(forgeDir) {

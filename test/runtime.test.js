@@ -65,6 +65,8 @@ test("too-few-arguments: the command stops with the error the message quotes", a
 
 test("invalid-argument in functions that read their own arguments, and for emoji and sticker IDs: the error the message quotes", async () => {
     for (const code of ["$loop[abc;x]", "$loop[2;x;i;maybe]", "$userCooldown[$authorID;1.5h]", "$emojiName[😀]", "$emojiName[smile]", "$stickerName[cool]", "$emojiGuildID[smile]", "$addButton[id;label;0]", "$addButton[id;label;99]"]) await stopsAsQuoted(code, "invalid-argument")
+    // A function that takes no brackets but needs an argument.
+    if (table.get("$entitlementConsume")?.args === null) await stopsAsQuoted("$entitlementConsume", "too-few-arguments")
     // A BigInt that JavaScript cannot read: ForgeScript's resolver throws, and that error is logged.
     await stopsAsQuoted("$bigintSum[1;1.5]", "invalid-argument")
     // A number is an enum value only where the enum has it: ButtonStyle starts at 1.
@@ -170,6 +172,22 @@ test("misplaced-branch and $ifx without $if: what ForgeScript does", async () =>
     assert.equal((await run("$ifx[$if[1==2;a]$let[z;1]]got=$get[z]")).output, "got=")
     assert.equal((await run("$switch[a;$case[a;x]$case[a;y]]")).output, "x")
     assert.equal((await run("$switch[a;$let[z;1]$case[a;x]]got=$get[z]")).output, "xgot=")
+})
+
+test("missing-context: without an interaction, its state or message words, each such function gives nothing (false for $is...)", async () => {
+    const fns = table.functions.filter((f) => f.context && f.package === "@tryforge/forgescript")
+    assert.ok(fns.length > 70, `${fns.length} functions`)
+    for (const fn of fns) {
+        // $entitlementConsume takes no brackets but needs an argument, so it never runs (tested elsewhere).
+        if (fn.args === null && fn.params?.some((p) => p.required)) continue
+        // run() has no interaction, no states and no message words, like a command whose event gives none.
+        const args = (fn.params ?? []).filter((p) => p.required).map((p) => (p.type === "Enum" ? (p.enumObject ? Object.keys(p.enumObject).find((k) => Number.isNaN(Number(k))) : p.enum[0]) : p.type === "Number" ? "1" : "x"))
+        const code = fn.args?.required || args.length ? `${fn.name}[${args.join(";")}]` : fn.name
+        const r = await run(code)
+        assert.equal(r.error, null, `${code}: ${r.error}`)
+        assert.ok(r.output === "" || r.output === "false", `${code} gives ${JSON.stringify(r.output)}`)
+        assert.equal(r.output === "false", /^\$is/.test(fn.name), code)
+    }
 })
 
 test("color-value: the embed gets the colour the message says", async () => {

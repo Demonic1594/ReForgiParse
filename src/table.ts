@@ -51,6 +51,12 @@ export interface IRawFunction {
      * does, read from its source. `undefined` when unknown.
      */
     resolved?: readonly number[]
+    /**
+     * What it reads from its command's event, read from its source: only the interaction, one of the
+     * event's states (`message`, `member`...), or a message command's words. Without it, the function
+     * gives nothing (see test/runtime.test.js).
+     */
+    context?: { interaction?: boolean; state?: string; words?: boolean }
     /** What it does, as its package documents it. */
     description?: string
     /** The ArgType names of what it returns, when documented. */
@@ -244,6 +250,28 @@ export function resolvedArgsOf(file: string | undefined, count: number): number[
     return out
 }
 
+/** Functions that read a message command's words (ctx.args); others that do also read their arguments. */
+const WORDS = new Set(["$message", "$messageslice"])
+
+/** What a NativeFunction reads from its command's event: see {@link IRawFunction.context}. */
+export function contextOf(file: string | undefined, name: string): IRawFunction["context"] {
+    if (!file) return undefined
+    let text: string
+    try {
+        text = require("node:fs").readFileSync(file, "utf8")
+    } catch {
+        return undefined
+    }
+    const body = text.slice(Math.max(0, text.indexOf("execute(")))
+    if (WORDS.has(name.toLowerCase())) return { words: true }
+    const kinds = new Set([...body.matchAll(/ctx\.([a-zA-Z]+)/g)].map((m) => m[1]))
+    // Only the interaction (and the variable store, the container): nothing else to fall back on.
+    if (kinds.has("interaction") && [...kinds].every((k) => ["interaction", "noop", "setEnvironmentKey", "getEnvironmentKey", "container"].includes(k))) return { interaction: true }
+    const states = new Set([...body.matchAll(/ctx\.states\??\.([a-zA-Z]+)/g)].map((m) => m[1]))
+    if (states.size === 1) return { state: [...states][0] }
+    return undefined
+}
+
 /** A NativeFunction's argument, described by name. */
 export function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam {
     const type = typeof a.type === "number" ? argType?.[a.type] : a.type
@@ -265,6 +293,7 @@ export function withParams(forgescript: ForgeScriptLike): IRawFunction[] {
             package: "@tryforge/forgescript",
             stores: storesOf(native.path),
             resolved: data.unwrap ? undefined : resolvedArgsOf(native.path, data.args?.length ?? 0),
+            context: contextOf(native.path, f.name),
             description: typeof data.description === "string" ? data.description : undefined,
             output: outputNames(data.output, forgescript.ArgType),
         }

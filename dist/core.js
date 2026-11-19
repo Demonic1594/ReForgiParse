@@ -97,7 +97,11 @@ function checkSource(text, lineColumn, file, src, obj, table, options) {
     }
     // The body of a custom function ({ name, params, code }, or any object in a functions folder) can read the caller's variables.
     const custom = !!obj && (obj.props.has("params") || (file.split("/").slice(0, -1).includes("functions") && obj.props.has("name")));
-    for (const f of (0, rules_1.checkCode)(src.value, table, { values: options.values, customFunction: custom })) {
+    // The command's event: its type, or interactionCreate for an application command (with data).
+    const typeProp = obj?.props.get("type");
+    const eventName = obj?.props.has("data") ? "interactionCreate" : typeProp && !typeProp.dynamic && !typeProp.error ? typeProp.value : null;
+    const event = eventName ? options.eventModel?.get(eventName) : undefined;
+    for (const f of (0, rules_1.checkCode)(src.value, table, { values: options.values, customFunction: custom, event })) {
         // A name right before a ${...} may be completed when the bot runs.
         if ((f.rule === "unknown-function" || f.rule === "glued-name") && src.value[f.end] === extract_1.DYNAMIC)
             continue;

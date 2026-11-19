@@ -57,7 +57,7 @@ for (const [rule, { bad, good }] of Object.entries(CASES)) {
 }
 
 test("every rule has a test case or a test elsewhere", () => {
-    const elsewhere = ["missing-brackets", "too-many-arguments", "unclosed-bracket", "unknown-function", "glued-name", "deprecated"]
+    const elsewhere = ["missing-context", "missing-brackets", "too-many-arguments", "unclosed-bracket", "unknown-function", "glued-name", "deprecated"]
     for (const rule of Object.keys(Rules)) assert.ok(rule in CASES || elsewhere.includes(rule), `no test for ${rule}`)
 })
 

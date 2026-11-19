@@ -10,6 +10,7 @@ exports.fromMetadata = fromMetadata;
 exports.outputNames = outputNames;
 exports.storesOf = storesOf;
 exports.resolvedArgsOf = resolvedArgsOf;
+exports.contextOf = contextOf;
 exports.paramFromNative = paramFromNative;
 exports.withParams = withParams;
 exports.usage = usage;
@@ -176,6 +177,31 @@ function resolvedArgsOf(file, count) {
     }
     return out;
 }
+/** Functions that read a message command's words (ctx.args); others that do also read their arguments. */
+const WORDS = new Set(["$message", "$messageslice"]);
+/** What a NativeFunction reads from its command's event: see {@link IRawFunction.context}. */
+function contextOf(file, name) {
+    if (!file)
+        return undefined;
+    let text;
+    try {
+        text = require("node:fs").readFileSync(file, "utf8");
+    }
+    catch {
+        return undefined;
+    }
+    const body = text.slice(Math.max(0, text.indexOf("execute(")));
+    if (WORDS.has(name.toLowerCase()))
+        return { words: true };
+    const kinds = new Set([...body.matchAll(/ctx\.([a-zA-Z]+)/g)].map((m) => m[1]));
+    // Only the interaction (and the variable store, the container): nothing else to fall back on.
+    if (kinds.has("interaction") && [...kinds].every((k) => ["interaction", "noop", "setEnvironmentKey", "getEnvironmentKey", "container"].includes(k)))
+        return { interaction: true };
+    const states = new Set([...body.matchAll(/ctx\.states\??\.([a-zA-Z]+)/g)].map((m) => m[1]));
+    if (states.size === 1)
+        return { state: [...states][0] };
+    return undefined;
+}
 /** A NativeFunction's argument, described by name. */
 function paramFromNative(a, argType) {
     const type = typeof a.type === "number" ? argType?.[a.type] : a.type;
@@ -197,6 +223,7 @@ function withParams(forgescript) {
             package: "@tryforge/forgescript",
             stores: storesOf(native.path),
             resolved: data.unwrap ? undefined : resolvedArgsOf(native.path, data.args?.length ?? 0),
+            context: contextOf(native.path, f.name),
             description: typeof data.description === "string" ? data.description : undefined,
             output: outputNames(data.output, forgescript.ArgType),
         };

@@ -1,6 +1,7 @@
 export { Diagnostic, ProjectRules } from "./core";
 import { Config } from "./config";
 import { Diagnostic } from "./core";
+import { EventModel } from "./rules";
 import { ValueChecker } from "./values";
 import { FunctionTable, IRawFunction } from "./table";
 /** Where a function list came from. */
@@ -44,6 +45,8 @@ export declare class Project {
     readonly values: ValueChecker;
     /** Event names a command's `type` can be, `null` when ForgeScript's could not be read. */
     readonly events: Set<string> | null;
+    /** What each of ForgeScript's events gives a command's code, read from its handlers. */
+    readonly eventModel: Map<string, EventModel> | null;
     private constructor();
     /** Reads a bot's folder: its `package.json`, installed packages and code files. */
     static load(root: string, options?: ProjectOptions): Project;
@@ -61,6 +64,12 @@ export declare function readNatives(dir: string, argType?: Record<number, string
     events: string[];
     failures: string[];
 };
+/**
+ * What each of ForgeScript's events gives a command's code, from its handler's source: the states it
+ * sets (`states: { message: ... }`), whether it gives message words (`args` other than `[]`), and an
+ * interaction (interactionCreate, whose handler runs commands with the interaction).
+ */
+export declare function forgeScriptEventModel(forgeDir: string): Map<string, EventModel> | null;
 /** A custom function as the compiler sees it (`ForgeFunction.asNative`, then `FunctionManager.raw`). */
 export declare function customAsRaw(c: Pick<CustomFunction, "name" | "params" | "brackets" | "firstParamCondition">): IRawFunction;
 //# sourceMappingURL=project.d.ts.map

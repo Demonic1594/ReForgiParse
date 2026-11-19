@@ -93,7 +93,7 @@ export function serve(input: NodeJS.ReadableStream = process.stdin, output: Node
         const file = fileOf(uri)
         if (!doc || !file || !project || !CODE_FILE.test(file)) return []
         const rel = path.relative(project.root, file).split(path.sep).join("/")
-        return checkScript(doc.text, project.table, { file: rel, properties: project.properties, values: project.values, events: project.events, rules: project.config.rules })
+        return checkScript(doc.text, project.table, { file: rel, properties: project.properties, values: project.values, events: project.events, rules: project.config.rules, eventModel: project.eventModel })
     }
 
     const publish = (uri: string) => {

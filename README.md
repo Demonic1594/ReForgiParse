@@ -124,7 +124,7 @@ Some things are only known when the bot runs, and are not reported:
 
 - whether an ID, a role or a channel exists, or is the right kind (a thread, a voice channel);
 - values made when the bot runs (`$get[x]`, `$message`);
-- whether a function has the context it reads in the command's event (an interaction in a `messageCreate` command, for example).
+- whether a function finds what it reads in the command's event, where it has something else to fall back on (`$channelID` reads the interaction, else the channel). Functions that read only the interaction, one of the event's states, or a message command's words are checked against the command's `type` (`missing-context`).
 
 ### Errors
 
@@ -150,6 +150,7 @@ Some things are only known when the bot runs, and are not reported:
 | `stray-bracket` | `$let[a;1]]` | The `]` closes nothing and is printed. |
 | `condition-operator` | `$if[a==1&&b==2;...]`, `$onlyIf[;...]` | Only the first operator is evaluated; an empty condition is false. |
 | `incomplete-call` | `$if[condition]`, `$while[condition]` | Runs nothing, always stops, or never ends. |
+| `missing-context` | `$option[...]` in a `messageCreate` command, `$newMember` in `messageCreate` | Gives nothing: the event has no interaction, or not that state. |
 | `misplaced-branch` | `$else[...]` outside `$ifx`, a second `$if` in `$ifx` | Runs every time, or never. |
 | `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
 | `http-url` | `http://...` as a URL argument | Converted to an invalid URL. |
