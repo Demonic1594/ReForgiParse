@@ -348,3 +348,27 @@ test("unreachable-code: no call in a reported range runs", async () => {
         assert.ok(!ran.includes("2"), code)
     }
 })
+
+test("discarded-response: after $stop, ForgeScript sends nothing; $onlyIf sends its message", async () => {
+    const sent = []
+    const original = Container.prototype.send
+    Container.prototype.send = async function () {
+        sent.push({ content: this.content, embeds: this.embeds.length })
+        return null
+    }
+    const send = async (code) => {
+        sent.length = 0
+        await quiet(() => Interpreter.run({ client, data: Compiler.compile(code), obj: { channel: { id: "1" } }, command: null, container: new Container(), redirectErrorsToConsole: true }))
+        return [...sent]
+    }
+    try {
+        for (const code of ["Not allowed!$stop", "$title[Error]$description[No]$stop", "$!title[a]$stop", "$if[1==1;You cannot$stop]Hi"]) {
+            finding(code, "discarded-response")
+            assert.deepEqual(await send(code), [], code)
+        }
+        assert.deepEqual(await send("$title[Error]Not allowed!"), [{ content: "Not allowed!", embeds: 1 }])
+        assert.deepEqual(await send("$onlyIf[1==2;Not allowed!]rest"), [{ content: "Not allowed!", embeds: 0 }])
+    } finally {
+        Container.prototype.send = original
+    }
+})

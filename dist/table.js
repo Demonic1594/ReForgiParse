@@ -12,6 +12,7 @@ exports.storesOf = storesOf;
 exports.resolvedArgsOf = resolvedArgsOf;
 exports.contextOf = contextOf;
 exports.eventDataOf = eventDataOf;
+exports.buildsOf = buildsOf;
 exports.paramFromNative = paramFromNative;
 exports.withParams = withParams;
 exports.usage = usage;
@@ -218,6 +219,20 @@ function eventDataOf(text) {
     const crash = /ctx\.runtime\.extras\.([A-Za-z_$][\w$]*)/.exec(body);
     return { event: true, crash: crash ? `TypeError: Cannot read properties of undefined (reading '${crash[1]}')` : undefined };
 }
+/** Whether a NativeFunction adds to its command's response without sending it: see {@link IRawFunction.builds}. */
+function buildsOf(file) {
+    if (!file)
+        return false;
+    let text;
+    try {
+        text = require("node:fs").readFileSync(file, "utf8");
+    }
+    catch {
+        return false;
+    }
+    const body = text.slice(Math.max(0, text.indexOf("execute(")));
+    return /ctx\.container\.(embed\(|embeds\.push|components\.push|files\.push|stickers\.push|poll\s*=|actionRow)/.test(body) && !/ctx\.container\.(send|edit|update|followUp|reset)\(/.test(body);
+}
 /** A NativeFunction's argument, described by name. */
 function paramFromNative(a, argType) {
     const type = typeof a.type === "number" ? argType?.[a.type] : a.type;
@@ -240,6 +255,7 @@ function withParams(forgescript) {
             stores: storesOf(native.path),
             resolved: data.unwrap ? undefined : resolvedArgsOf(native.path, data.args?.length ?? 0),
             context: contextOf(native.path, f.name),
+            builds: buildsOf(native.path),
             description: typeof data.description === "string" ? data.description : undefined,
             output: outputNames(data.output, forgescript.ArgType),
         };

@@ -56,6 +56,8 @@ export interface IRawFunction {
      * event's states (`message`, `member`...), or a message command's words. Without it, the function
      * gives nothing (see test/runtime.test.js).
      */
+    /** It adds to the response its command sends (an embed, a component, a file...) without sending it. Read from its source. */
+    builds?: boolean
     context?: {
         interaction?: boolean
         state?: string
@@ -64,6 +66,10 @@ export interface IRawFunction {
         event?: boolean
         /** The error ForgeScript stops the command with when there is none, if it does. */
         crash?: string
+        /** Its package's events whose data it does not find: each with the TypeError it stops with, or `null` (it gives nothing). */
+        missingIn?: Record<string, string | null>
+        /** Its package's events whose data it reads. */
+        givenIn?: string[]
     }
     /** What it does, as its package documents it. */
     description?: string
@@ -294,6 +300,19 @@ export function eventDataOf(text: string): IRawFunction["context"] {
     return { event: true, crash: crash ? `TypeError: Cannot read properties of undefined (reading '${crash[1]}')` : undefined }
 }
 
+/** Whether a NativeFunction adds to its command's response without sending it: see {@link IRawFunction.builds}. */
+export function buildsOf(file: string | undefined): boolean {
+    if (!file) return false
+    let text: string
+    try {
+        text = require("node:fs").readFileSync(file, "utf8")
+    } catch {
+        return false
+    }
+    const body = text.slice(Math.max(0, text.indexOf("execute(")))
+    return /ctx\.container\.(embed\(|embeds\.push|components\.push|files\.push|stickers\.push|poll\s*=|actionRow)/.test(body) && !/ctx\.container\.(send|edit|update|followUp|reset)\(/.test(body)
+}
+
 /** A NativeFunction's argument, described by name. */
 export function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam {
     const type = typeof a.type === "number" ? argType?.[a.type] : a.type
@@ -316,6 +335,7 @@ export function withParams(forgescript: ForgeScriptLike): IRawFunction[] {
             stores: storesOf(native.path),
             resolved: data.unwrap ? undefined : resolvedArgsOf(native.path, data.args?.length ?? 0),
             context: contextOf(native.path, f.name),
+            builds: buildsOf(native.path),
             description: typeof data.description === "string" ? data.description : undefined,
             output: outputNames(data.output, forgescript.ArgType),
         }

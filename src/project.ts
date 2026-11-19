@@ -10,6 +10,7 @@ import * as path from "node:path"
 import { checkRuleNames, Config, loadConfig } from "./config"
 import { checkScript, Diagnostic } from "./core"
 import { extractCode } from "./extract"
+import { EventSite, eventSites, Outcome, packageSources, probeExtensions, readsEventData } from "./events"
 import { EventModel } from "./rules"
 import { ValueChecker } from "./values"
 import { eventDataOf, FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, outputNames, paramFromNative, resolvedArgsOf, storesOf, withParams } from "./table"
@@ -91,6 +92,7 @@ export class Project {
         const sources: FunctionSource[] = []
         const raw: IRawFunction[] = []
         const seen = new Set<string>()
+        sourceCache.clear()
         const extensionEvents: string[] = []
         // Each extension's folder and events: what its events give a command, and its functions read.
         const extensions: Array<{ name: string; dir: string; events: string[] }> = []
@@ -182,12 +184,18 @@ export class Project {
         }
         const values = new ValueChecker(forgescript, discord)
         const eventModel = forgeDir ? forgeScriptEventModel(forgeDir) : null
-        for (const ext of extensions) {
+        const probes = forgeDir && config.probe !== false ? probeEvents(forgeDir, extensions) : extensions.map(() => null)
+        for (const [i, ext] of extensions.entries()) {
             const scan = scanExtension(ext.dir)
-            for (const f of raw) if (f.package === ext.name && !f.context) f.context = scan.functions.get(f.name.toLowerCase())
+            const probed = probes[i]
+            for (const f of raw) {
+                if (f.package !== ext.name || f.context) continue
+                f.context = probed ? probed.get(f.name.toLowerCase()) : scan.functions.get(f.name.toLowerCase())
+            }
             if (!eventModel) continue
+            const sources = sourcesOf(ext.dir)
             for (const name of ext.events) {
-                const mine: EventModel = { name, packages: [ext.name], interaction: true, states: scan.states, words: scan.words }
+                const mine: EventModel = { name, packages: [ext.name], interaction: true, states: eventStates(eventSites(sources, name)) ?? scan.states, words: scan.words }
                 const other = eventModel.get(name)
                 eventModel.set(name, other ? mergeEvents(other, mine) : mine)
             }
@@ -286,6 +294,76 @@ export function forgeScriptEventModel(forgeDir: string): Map<string, EventModel>
         for (const m of block.matchAll(/^ {20}([a-zA-Z]+): \{/gm)) states.add(m[1])
         const args = /\bargs(:\s*([^,\n]+))?,/.exec(text)
         out.set(name, { name, packages: ["@tryforge/forgescript"], interaction: name === "interactionCreate", states, words: !!args && args[2]?.trim() !== "[]" })
+    }
+    return out
+}
+
+/**
+ * Each extension's functions that read its events' data, found by running them (one child process for all, {@link probeExtensions}):
+ * those that give something with one of its events' data and nothing (or a TypeError) without, with
+ * what they give in each of its events. `null` when the probe could not run.
+ */
+function probeEvents(forgeDir: string, extensions: Array<{ name: string; dir: string; events: string[] }>): Array<Map<string, IRawFunction["context"]> | null> {
+    const scanned = extensions.map((ext) => {
+        const sources = sourcesOf(ext.dir)
+        const functions = sources
+            .filter((s) => s.text.includes("NativeFunction") && readsEventData(s.text, sources))
+            .map((s) => ({ name: /\bname:\s*["'](\$[A-Za-z0-9_]+)["']/.exec(s.text)?.[1] ?? "", file: s.file }))
+            .filter((f) => f.name)
+        return { ext, sources, functions }
+    })
+    if (!scanned.some((s) => s.functions.length)) return extensions.map(() => new Map())
+    // Every extension's events, each function is run in: its own and the others' ("package|event").
+    const events: Record<string, EventSite[]> = {}
+    for (const s of scanned) for (const e of s.ext.events) events[`${s.ext.name}|${e}`] = eventSites(s.sources, e)
+    const results = probeExtensions(forgeDir, scanned.map((s) => ({ functions: s.functions, events: s.functions.length ? events : {} })))
+    return scanned.map((s, i) => {
+        if (!s.functions.length) return new Map()
+        const result = results?.[i]
+        if (!result) return null
+        const out = new Map<string, IRawFunction["context"]>()
+        for (const [name, r] of Object.entries(result)) {
+            if (r.none === "value" || r.none === "unknown") continue
+            const own = Object.entries(r.events).filter(([k]) => k.startsWith(`${s.ext.name}|`))
+            // Data it reads in one of its own events, or its events' data cannot be read from source.
+            if (!own.some(([, o]) => o === "value") && !own.every(([, o]) => o === "unknown")) continue
+            // Per event name: missing only when it is in every package that has an event of that name.
+            const byName = new Map<string, Outcome[]>()
+            for (const [key, o] of Object.entries(r.events)) {
+                const event = key.slice(key.indexOf("|") + 1)
+                byName.set(event, [...(byName.get(event) ?? []), o])
+            }
+            const missing: Record<string, string | null> = {}
+            for (const [event, outcomes] of byName) {
+                if (outcomes.every((o) => o === "nothing")) missing[event] = null
+                else if (outcomes.every((o) => typeof o === "object")) missing[event] = (outcomes[0] as { crash: string }).crash
+            }
+            const givenIn = own.filter(([, o]) => o === "value").map(([k]) => k.slice(k.indexOf("|") + 1))
+            out.set(name, { event: true, crash: typeof r.none === "object" ? r.none.crash : undefined, missingIn: missing, givenIn })
+        }
+        return out
+    })
+}
+
+/** An extension's files, read once per load of a project. */
+const sourceCache = new Map<string, ReturnType<typeof packageSources>>()
+function sourcesOf(dir: string) {
+    let out = sourceCache.get(dir)
+    if (!out) sourceCache.set(dir, (out = packageSources(dir)))
+    return out
+}
+
+/**
+ * The states an extension's event gives its commands, from how its handler runs them: `undefined` when
+ * that is not known (no site), `null` when a site's states cannot be read.
+ */
+function eventStates(sites: EventSite[]): Set<string> | null | undefined {
+    if (!sites.length) return undefined
+    const out = new Set<string>()
+    for (const site of sites) {
+        if (site.states === null) return null
+        if (site.states?.kind === "object") for (const k of Object.keys(site.states.keys)) out.add(k)
+        else if (site.states && site.states.kind !== "none") return null
     }
     return out
 }

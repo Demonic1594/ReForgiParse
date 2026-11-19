@@ -52,6 +52,8 @@ export interface IRawFunction {
      * event's states (`message`, `member`...), or a message command's words. Without it, the function
      * gives nothing (see test/runtime.test.js).
      */
+    /** It adds to the response its command sends (an embed, a component, a file...) without sending it. Read from its source. */
+    builds?: boolean;
     context?: {
         interaction?: boolean;
         state?: string;
@@ -60,6 +62,10 @@ export interface IRawFunction {
         event?: boolean;
         /** The error ForgeScript stops the command with when there is none, if it does. */
         crash?: string;
+        /** Its package's events whose data it does not find: each with the TypeError it stops with, or `null` (it gives nothing). */
+        missingIn?: Record<string, string | null>;
+        /** Its package's events whose data it reads. */
+        givenIn?: string[];
     };
     /** What it does, as its package documents it. */
     description?: string;
@@ -158,6 +164,8 @@ export declare function contextOf(file: string | undefined, name: string): IRawF
  * (`ctx.runtime.extras`, or `ctx.extendedStates`), with nothing else to fall back on: from its source.
  */
 export declare function eventDataOf(text: string): IRawFunction["context"];
+/** Whether a NativeFunction adds to its command's response without sending it: see {@link IRawFunction.builds}. */
+export declare function buildsOf(file: string | undefined): boolean;
 /** A NativeFunction's argument, described by name. */
 export declare function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam;
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */

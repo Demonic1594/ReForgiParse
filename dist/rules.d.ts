@@ -64,6 +64,10 @@ export declare const Rules: {
         readonly severity: "info";
         readonly description: "A condition with fixed text on each side (`$if[1==1;...]`, `$if[false;...]`): always true or always false, so one branch never runs.";
     };
+    readonly "discarded-response": {
+        readonly severity: "warning";
+        readonly description: "`$stop` after the command built text or an embed: ForgeScript then sends nothing, so they are never sent.";
+    };
     readonly "unreachable-code": {
         readonly severity: "warning";
         readonly description: "Code after `$stop`, `$break`, `$continue` or `$return` in the same block (or in an argument before it): it never runs.";

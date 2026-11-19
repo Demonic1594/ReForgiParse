@@ -117,6 +117,7 @@ Each finding states what ForgeScript does with the code. Some consequences:
 - **Code inside `$escapeCode[...]` is printed, not run.** Only compile errors and bracket problems apply to it.
 - **Some functions read their own arguments**, such as `$if`, `$while` and `$cooldown`, so ForgeScript's usual check for a missing one does not apply. The arguments such a function does check are read from its source, and checked like any other. What leaving out the others does was established for each function on ForgeScript's interpreter: the command stops (`too-few-arguments`), or the function runs without it (`incomplete-call`).
 - **Values a function's own work fails on are checked too**, with the same operation ForgeScript runs: a negative `$repeat` count, an invalid `$replaceRegex` pattern, a time zone `$setTimezone` cannot use, a `$callFunction` of a function the bot does not have.
+- **An extension's events are read from its source.** What each event gives its commands (data and states) is followed from its handler back to where the event is emitted. To find which functions read that data, ReForgiParse runs each function whose source reads it (`ctx.runtime.extras`, or a giveaway's states), with stand-in data shaped like each event's, in a separate process. Nothing else of the extension runs, the stand-in context has nothing but the event's data, and the result is cached in the system's temporary folder. Set `"probe": false` to turn this off.
 
 ### Limits
 
@@ -124,7 +125,8 @@ Some things are only known when the bot runs, and are not reported:
 
 - whether an ID, a role or a channel exists, or is the right kind (a thread, a voice channel);
 - values made when the bot runs (`$get[x]`, `$message`);
-- whether a function finds what it reads in the command's event, where it has something else to fall back on (`$channelID` reads the interaction, else the channel). Functions that read only the interaction, one of the event's states, a message command's words, or (for an extension's functions) only its own events' data are checked against the command's `type` (`missing-context`). Within an extension's own events, which of them gives which data is not checked;
+- whether a function finds what it reads in the command's event, where it has something else to fall back on (`$channelID` reads the interaction, else the channel). Functions that read only the interaction, one of the event's states, a message command's words, or (for an extension's functions) only its events' data are checked against the command's `type` (`missing-context`);
+- for an extension's event whose data is built away from where the event is emitted (ReForgeTopGG's votes and stats), which of its functions find their data in it. They are still checked in other packages' events;
 - whether a condition is true, past what its fixed text and the spaces around its operator show.
 
 ### Errors
@@ -152,7 +154,8 @@ Some things are only known when the bot runs, and are not reported:
 | `condition-operator` | `$if[a==1&&b==2;...]`, `$onlyIf[;...]` | Only the first operator is evaluated; an empty condition is false. |
 | `condition-value` | `$if[$get[a] == 1;...]`, `$if[$isBot==True;...]`, `$if[$get[a]>abc;...]`, `$case[ 1 ;...]` | Always false (`!=` always true): `==` and `$case` compare text exactly, spaces included; `<` and `>` compare numbers. |
 | `incomplete-call` | `$if[condition]`, `$while[condition]` | Runs nothing, always stops, or never ends. |
-| `missing-context` | `$option[...]` in a `messageCreate` command, `$newMember` in `messageCreate`, `$voteUserID` (ReForgeTopGG) in `messageCreate`, `$message` in `voted` | Gives nothing (or, for some extension functions, stops the command): the event has no interaction, not that state, or not that extension's data. |
+| `missing-context` | `$option[...]` in a `messageCreate` command, `$newMember` in `messageCreate`, `$voteUserID` (ReForgeTopGG) in `messageCreate`, `$cooldownData` (ReForgeDB) in `variableCreate`, `$oldGiveaway` in `giveawayStart`, `$message` in `voted` | Gives nothing (or, for some extension functions, stops the command): the event has no interaction, not that state, or not that data. |
+| `discarded-response` | `Not allowed!$stop`, `$title[Error]$description[...]$stop` | Nothing is sent: `$stop` ends the command before it sends its response. |
 | `unreachable-code` | `$stop $sendMessage[...]`, `$loop[3;$break $ping]`, `$let[x;$stop]rest` | Never runs. |
 | `misplaced-branch` | `$else[...]` outside `$ifx`, a second `$if` in `$ifx` | Runs every time, or never. |
 | `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
@@ -205,6 +208,7 @@ ReForgiParse reads `reforgiparse.config.json` from the bot's root folder, or a `
 | `properties` | string[] | Properties containing code. Default: `["code"]`. |
 | `known` | string[] | Functions created at runtime, never reported as unknown. |
 | `indent` | number \| `"tab"` | Indent size for `--reindent`. |
+| `probe` | boolean | Run extensions' event-data functions on stand-in data to find which events give their data. Default: `true`. |
 
 Invalid configuration is reported as an error.
 

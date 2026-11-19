@@ -10,4 +10,5 @@ export * from "./config";
 export * from "./directives";
 export { checkScript, closest } from "./core";
 export type { ScriptOptions } from "./core";
+export * from "./events";
 //# sourceMappingURL=index.d.ts.map

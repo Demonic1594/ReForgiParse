@@ -1,6 +1,6 @@
 {
   "name": "reforgiparse",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Static analysis for ForgeScript bots: a parser that matches ForgeScript's compiler, checks with the bot's own functions, safe fixes, and a language server.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -29,4 +29,5 @@ __exportStar(require("./directives"), exports);
 var core_1 = require("./core");
 Object.defineProperty(exports, "checkScript", { enumerable: true, get: function () { return core_1.checkScript; } });
 Object.defineProperty(exports, "closest", { enumerable: true, get: function () { return core_1.closest; } });
+__exportStar(require("./events"), exports);
 //# sourceMappingURL=index.js.map

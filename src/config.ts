@@ -23,6 +23,11 @@ export interface Config {
     known?: string[]
     /** For --reindent: spaces per level, or "tab". Default: detected from the code, else 4. */
     indent?: number | "tab"
+    /**
+     * Run the extensions' functions that read their events' data, on stand-in data, to find which of
+     * their events give it (default `true`). With `false`, only other events' commands are checked.
+     */
+    probe?: boolean
 }
 
 export const CONFIG_FILE = "reforgiparse.config.json"
@@ -101,12 +106,17 @@ function validate(raw: unknown, where: string): Config {
         return list as string[]
     }
     for (const key of Object.keys(raw)) {
-        if (!["rules", "include", "exclude", "properties", "known", "indent", "$schema"].includes(key)) throw new ConfigError(where, `unknown option "${key}" (options: rules, include, exclude, properties, known, indent)`)
+        if (!["rules", "include", "exclude", "properties", "known", "indent", "probe", "$schema"].includes(key)) throw new ConfigError(where, `unknown option "${key}" (options: rules, include, exclude, properties, known, indent, probe)`)
     }
     out.include = strings("include")
     out.exclude = strings("exclude")
     out.properties = strings("properties")
     out.known = strings("known")
+    const probe = (raw as Record<string, unknown>).probe
+    if (probe !== undefined) {
+        if (typeof probe !== "boolean") throw new ConfigError(where, `"probe" must be true or false, not ${JSON.stringify(probe)}`)
+        out.probe = probe
+    }
     const indent = (raw as Record<string, unknown>).indent
     if (indent !== undefined) {
         if (indent !== "tab" && !(typeof indent === "number" && Number.isInteger(indent) && indent >= 1 && indent <= 8)) throw new ConfigError(where, `"indent" must be a number of spaces from 1 to 8, or "tab", not ${JSON.stringify(indent)}`)

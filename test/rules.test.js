@@ -32,6 +32,10 @@ const CASES = {
         bad: ["$if[1==1;x;y]", "$if[false;x;y]", "$if[true;x;y]", "$onlyIf[a!=b;no]", "$if[2>10;x;y]", "$if[==;x;y]", "$and[1==1;$authorID==1]", "$if[\\$x==\\$x;x;y]"],
         good: ["$if[$get[a]==1;x;y]", "$while[true;$break]", "$if[$authorID==1;x;y]", "$if[1==$get[a];x;y]"],
     },
+    "discarded-response": {
+        bad: ["Not allowed!$stop", "$title[Error]$description[No]$stop", "$!title[a]$stop", "$if[$authorID==1;No$stop]Hi", "Hi$scope[$if[$authorID==1;$stop]]", "$let[x;$title[a]]$get[x]$stop", "$addButton[a;b;Primary]$loop[2;$stop]"],
+        good: ["$stop", "$if[$authorID==1;$stop]Hello", "$sendMessage[$channelID;No]$stop", "$username$stop", "$try[Hi$stop;c]", "$try[$onlyIf[$authorID==1;No];$stop]", "$async[Hi$stop]", "$c[Hi]$stop", "$if[$authorID==1;$title[x];$stop]", "$escapeCode[Hi$stop]", "$onlyIf[$authorID==1;No]"],
+    },
     "unreachable-code": {
         bad: ["a$stop b", "$loop[2;$break$ping]", "$loop[2;$continue x]", "$let[x;$stop]$ping", "$let[x;$sum[1;$stop]]b", "$if[$authorID==1;a$stop b;c]", "$try[$stop x;y]"],
         good: ["a$stop", "$stop\n", "$stop$c[why]", "$if[$authorID==1;$stop]rest", "$try[$stop;y]z", "$escapeCode[$stop x]", "$c[$stop x]", "$loop[2;$if[$authorID==1;$break]x]", "$!stop"],
