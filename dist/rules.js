@@ -29,6 +29,9 @@ exports.Rules = {
     "glued-name": { severity: "warning", description: "A `$name` whose start is another function: that one runs, and the rest is printed." },
     "misplaced-operator": { severity: "warning", description: "`!`, `#` or `@[...]` in the wrong order, or before another `$`: the call is printed as text." },
     "condition-operator": { severity: "warning", description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all." },
+    "condition-value": { severity: "warning", description: "A condition that is false whatever the values: spaces around `==`, a word compared with `<`, `$isBot==True`, or spaces around a condition with no operator." },
+    "constant-condition": { severity: "info", description: "A condition with fixed text on each side (`$if[1==1;...]`, `$if[false;...]`): always true or always false, so one branch never runs." },
+    "unreachable-code": { severity: "warning", description: "Code after `$stop`, `$break`, `$continue` or `$return` in the same block (or in an argument before it): it never runs." },
     "unescaped-bracket": { severity: "warning", description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed." },
     "misplaced-statement": { severity: "error", description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command." },
     "missing-context": { severity: "warning", description: "A function that reads what the command's event does not give (`$option` in a `messageCreate` command): it gives nothing." },
@@ -192,7 +195,17 @@ function blockProblems(code, result, inPrinted, add) {
             const block = call.fields[1];
             const direct = block.kind === "field" ? block.functions : [];
             const seen = new Set();
+            // $switch compares its value with each $case's exactly (native/statement/switch.js), spaces included.
+            const padded = (f) => !!f && f.kind === "field" && /^\s|\s$/.test(f.raw);
+            const valuePadded = padded(call.fields[0]);
+            if (valuePadded && direct.some((c) => named(c, "$case") && !padded(c.fields?.[0]))) {
+                add("condition-value", `$switch compares its value with each $case's exactly, and this one has spaces or line breaks around it, so the $case values without them never match. Remove the spaces`, call.fields[0].start, Math.max(call.fields[0].end, call.fields[0].start + 1));
+            }
             for (const c of direct) {
+                if (named(c, "$case") && !valuePadded && padded(c.fields?.[0])) {
+                    const f = c.fields[0];
+                    add("condition-value", `This $case's value has spaces or line breaks around it, and $switch compares exactly, so it never matches. Remove the spaces`, f.start, f.end);
+                }
                 if (named(c, "$c"))
                     continue;
                 if (!named(c, "$case")) {
@@ -210,6 +223,75 @@ function blockProblems(code, result, inPrinted, add) {
                 add("misplaced-branch", `The text in $switch's cases is never printed: $switch runs only its $case branches`, block.start, block.end);
         }
     }
+}
+/** Functions that always end the block they run in (native/limiter/stop.js, native/statement/*.js). */
+const ENDS_BLOCK = new Set(["$stop", "$break", "$continue", "$return"]);
+/**
+ * Code after a call that always ends its block. ForgeScript runs a block's functions in order and returns
+ * at the first that does not succeed (CompiledFunction.resolveCode), so the rest of the block never runs.
+ * A function that reads all its arguments before it runs (`unwrap`) ends the block too when one of them
+ * does: `$let[x;$stop]`.
+ */
+function unreachableCode(code, result, inPrinted, add) {
+    const forgescript = (c) => !c.fn.package || c.fn.package === "@tryforge/forgescript";
+    const parts = (f) => (f.kind === "condition" ? [f.lhs, ...(f.rhs ? [f.rhs] : [])] : [f]);
+    const ender = (c) => {
+        if (forgescript(c) && ENDS_BLOCK.has(c.fn.name.toLowerCase()))
+            return c;
+        if (!c.fn.unwrap)
+            return null;
+        for (const f of c.fields ?? [])
+            for (const part of parts(f)) {
+                for (const inner of part.functions) {
+                    const e = ender(inner);
+                    if (e)
+                        return e;
+                }
+            }
+        return null;
+    };
+    const comment = (c) => forgescript(c) && c.fn.name.toLowerCase() === "$c";
+    const block = (calls, start, end) => {
+        const i = calls.findIndex((c) => !inPrinted(c.start) && ender(c));
+        if (i >= 0) {
+            const after = calls[i];
+            const e = ender(after);
+            // What follows, without comments ($c) and blank space.
+            let from = -1;
+            let to = -1;
+            let at = after.end;
+            for (const c of [...calls.slice(i + 1), null]) {
+                const stop = c ? c.start : end;
+                const text = code.slice(at, stop);
+                const lead = text.search(/\S/);
+                if (lead >= 0) {
+                    if (from < 0)
+                        from = at + lead;
+                    to = at + text.trimEnd().length;
+                }
+                if (!c)
+                    break;
+                if (!comment(c)) {
+                    if (from < 0)
+                        from = c.start;
+                    to = c.end;
+                }
+                at = c.end;
+            }
+            if (from >= 0) {
+                const via = e === after ? e.name : `${e.name} (in ${after.name})`;
+                add("unreachable-code", `This never runs: ${via} ends the block before it`, from, to);
+            }
+        }
+        for (const c of calls) {
+            if (comment(c) || inPrinted(c.start))
+                continue;
+            for (const f of c.fields ?? [])
+                for (const part of parts(f))
+                    block(part.functions, part.start, part.end);
+        }
+    };
+    block(result.functions, 0, code.length);
 }
 /** `$break`, `$continue` and `$return` whose every enclosing function passes them on to the top of a command. */
 function misplacedStatements(result, options, inPrinted, add) {
@@ -396,7 +478,7 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         }
         for (const field of call.fields ?? []) {
             if (field.kind === "condition")
-                conditionProblems(code, call, field, add, incomplete.has(call));
+                conditionProblems(code, call, field, add, incomplete.has(call), options.values);
             for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field])
                 textProblems(code, call, part, add);
         }
@@ -427,11 +509,20 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         const article = /^[aeiou]/i.test(event.name) ? "an" : "a";
         for (const call of calls) {
             const need = call.fn.context;
-            if (!need || (call.fn.package && call.fn.package !== "@tryforge/forgescript"))
+            if (!need)
+                continue;
+            if (need.event && call.fn.package) {
+                if (event.packages.includes(call.fn.package))
+                    continue;
+                const outcome = need.crash ? `ForgeScript stops the command ("${need.crash}")` : "it has no event data to read here";
+                add("missing-context", `${call.name} reads data that only the events of ${call.fn.package} give, and ${article} ${event.name} command is not one of them: ${outcome}`, call.start, call.nameEnd);
+                continue;
+            }
+            if (call.fn.package && call.fn.package !== "@tryforge/forgescript")
                 continue;
             if (need.interaction && !event.interaction)
                 add("missing-context", `${call.name} reads the interaction, and ${article} ${event.name} command has none: it does nothing and gives ${/^\$is/i.test(call.fn.name) ? "false" : "nothing"} here`, call.start, call.nameEnd);
-            else if (need.state && !event.states.has(need.state))
+            else if (need.state && event.states && !event.states.has(need.state))
                 add("missing-context", `${call.name} reads the event's ${need.state} state, which ${event.name} does not give: it always gives nothing here`, call.start, call.nameEnd);
             else if (need.words && !event.words)
                 add("missing-context", `${call.name} reads the words of a message command, and ${article} ${event.name} command has none: it always gives nothing here`, call.start, call.nameEnd);
@@ -439,6 +530,8 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
     }
     if (!result.errors.length)
         misplacedStatements(result, options, inPrinted, add);
+    if (!result.errors.length)
+        unreachableCode(code, result, inPrinted, add);
     // Code that does not compile never runs: what its variables would do does not matter.
     if (!result.errors.length)
         variableProblems(calls, options, add);
@@ -570,13 +663,15 @@ function textProblems(code, call, field, add) {
         }
     }
 }
-function conditionProblems(code, call, field, add, incomplete = false) {
+function conditionProblems(code, call, field, add, incomplete = false, values) {
     const plain = (f) => textOf(code, f).filter((c) => !c.escaped).map((c) => c.ch).join("");
     if (field.op !== "unknown" && field.rhs) {
         const rhs = plain(field.rhs);
         const second = parser_1.Operators.find((op) => rhs.includes(op));
         if (second)
             add("condition-operator", `Only the first operator counts in ${call.name}: the right side of ${field.op} is the text ${JSON.stringify(field.rhs.raw)}. To combine conditions, use $and[...;...] or $or[...;...]`, field.start, field.end);
+        else if (!incomplete)
+            conditionValues(code, call, field, add, values);
         return;
     }
     const text = plain(field.lhs);
@@ -590,6 +685,90 @@ function conditionProblems(code, call, field, add, incomplete = false) {
     }
     else if (!field.lhs.functions.length && !["", "true", "false"].includes(text.trim())) {
         add("condition-operator", `${JSON.stringify(text)} has no operator, so ${call.name} only treats it as true when it is exactly "true"`, field.start, field.end);
+    }
+    else if (!incomplete)
+        conditionValues(code, call, field, add, values);
+}
+/** What one side of a condition is: its text, and the call it is when it is a single call. */
+function sideOf(code, side) {
+    const rest = textOf(code, side).map((c) => c.ch).join("");
+    const only = side.functions.length === 1 && rest.trim() === "" ? side.functions[0] : null;
+    return {
+        side,
+        literal: side.functions.length === 0,
+        text: rest,
+        /** A single call to a function that gives only true or false. */
+        boolean: !!only && !only.negated && only.fn.output?.length === 1 && only.fn.output[0] === "Boolean" ? only : null,
+        /** A single call to a function that gives only numbers. */
+        number: !!only && !only.negated && only.fn.output?.length === 1 && only.fn.output[0] === "Number" ? only : null,
+        /** Spaces or line breaks at its start or end (in its text, not in a call's output). */
+        padded: /^\s|\s$/.test(side.raw),
+    };
+}
+/**
+ * Conditions false whatever the values, read from ForgeScript's `Conditions` (core/Compiler.js): `==`
+ * and `!=` compare the text exactly, spaces included; `<`, `<=`, `>`, `>=` compare `Number(...)`, NaN for
+ * a word; with no operator, only the exact text `true` is true.
+ */
+function conditionValues(code, call, field, add, values) {
+    let reported = false;
+    valueProblems(code, call, field, (...a) => ((reported = true), add(...a)));
+    if (reported || !values)
+        return;
+    const lhs = sideOf(code, field.lhs);
+    const rhs = field.rhs ? sideOf(code, field.rhs) : null;
+    if (!lhs.literal || (rhs && !rhs.literal))
+        return;
+    // $while[true;...] is how a loop that ends with $break is written.
+    if (!rhs && lhs.text === "true" && /^\$while$/i.test(call.fn.name))
+        return;
+    const result = values.condition(field.op, lhs.text, rhs ? rhs.text : null);
+    if (result === null)
+        return;
+    const shown = rhs ? `${JSON.stringify(lhs.text)} ${field.op} ${JSON.stringify(rhs.text)}` : JSON.stringify(lhs.text);
+    add("constant-condition", `This condition is always ${result}: it is fixed text (${shown}), so ${call.name} gives the same result every time`, field.start, Math.max(field.end, field.start + 1));
+}
+function valueProblems(code, call, field, add) {
+    const lhs = sideOf(code, field.lhs);
+    if (field.op === "unknown") {
+        if (lhs.padded && (lhs.boolean || (lhs.literal && lhs.text.trim() === "true"))) {
+            add("condition-value", `${call.name} treats this as true only when it is exactly "true", and the spaces or line breaks around it are part of it, so it is always false. Remove them`, field.start, field.end);
+        }
+        else if (lhs.number) {
+            add("condition-value", `${lhs.number.name} gives a number, and with no operator ${call.name} is true only for the text "true", so it is always false. Compare it, as in ${lhs.number.name}>0`, field.start, field.end);
+        }
+        return;
+    }
+    if (!field.rhs)
+        return;
+    const rhs = sideOf(code, field.rhs);
+    const sides = [lhs, rhs];
+    if (field.op === "==" || field.op === "!=") {
+        const always = field.op === "==" ? "false" : "true";
+        const padded = sides.filter((s) => s.padded);
+        if (padded.length && !(lhs.literal && rhs.literal && lhs.side.raw === rhs.side.raw)) {
+            const where = padded.length === 2 ? "on both sides" : padded[0] === lhs ? "on the left side" : "on the right side";
+            add("condition-value", `${field.op} compares each side's text exactly, spaces and line breaks included, so ${call.name} is ${always} unless the values have the same spaces. Remove the spaces ${where}`, field.start, field.end);
+            return;
+        }
+        for (const [a, b] of [[lhs, rhs], [rhs, lhs]]) {
+            if (a.boolean && b.literal && !["", "true", "false"].includes(b.text)) {
+                const hint = ["true", "false"].includes(b.text.toLowerCase()) ? `. Write ${b.text.toLowerCase()}` : "";
+                add("condition-value", `${a.boolean.name} gives true or false, never ${JSON.stringify(b.text)}, so this ${field.op} is always ${always}${hint}`, field.start, field.end);
+                return;
+            }
+        }
+        return;
+    }
+    for (const s of sides) {
+        if (s.literal && Number.isNaN(Number(s.text))) {
+            add("condition-value", `${field.op} compares numbers, and ${JSON.stringify(s.text)} is not one (ForgeScript reads it as NaN), so ${call.name} is always false`, field.start, field.end);
+            return;
+        }
+        if (s.boolean) {
+            add("condition-value", `${field.op} compares numbers, and ${s.boolean.name} gives true or false (NaN as a number), so ${call.name} is always false`, field.start, field.end);
+            return;
+        }
     }
 }
 /** `$` with `!`, `#` or `@[...]` in another order than `$!#@[...]name`, or followed by another `$`. */

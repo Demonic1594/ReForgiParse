@@ -56,6 +56,10 @@ export interface IRawFunction {
         interaction?: boolean;
         state?: string;
         words?: boolean;
+        /** Only its own package's events' data (`ctx.runtime.extras`, a giveaway's states): `$voteUserID`. */
+        event?: boolean;
+        /** The error ForgeScript stops the command with when there is none, if it does. */
+        crash?: string;
     };
     /** What it does, as its package documents it. */
     description?: string;
@@ -149,6 +153,11 @@ export declare function storesOf(file: string | undefined): IRawFunction["stores
 export declare function resolvedArgsOf(file: string | undefined, count: number): number[] | undefined;
 /** What a NativeFunction reads from its command's event: see {@link IRawFunction.context}. */
 export declare function contextOf(file: string | undefined, name: string): IRawFunction["context"];
+/**
+ * Whether an extension's NativeFunction reads only the data its package's events give a command
+ * (`ctx.runtime.extras`, or `ctx.extendedStates`), with nothing else to fall back on: from its source.
+ */
+export declare function eventDataOf(text: string): IRawFunction["context"];
 /** A NativeFunction's argument, described by name. */
 export declare function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam;
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */

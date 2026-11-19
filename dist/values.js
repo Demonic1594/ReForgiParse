@@ -22,6 +22,7 @@ class ValueChecker {
     cdnRegex;
     parseEmoji;
     colors;
+    conditions;
     /** @param forgescript The bot's installed ForgeScript module, for its exact resolvers. Without it, a built-in copy of the 2.8.0 rules is used. */
     constructor(forgescript, discord) {
         const cf = forgescript?.CompiledFunction;
@@ -31,6 +32,12 @@ class ValueChecker {
         this.cdnRegex = cf?.CDNIdRegex ?? /https?:\/\/cdn\.discordapp\.com\/(emojis|stickers)\/(\d+)/;
         this.parseEmoji = discord?.parseEmoji ?? ((text) => ({ id: /^<a?:\w+:(\d+)>$/.exec(text)?.[1] ?? null }));
         this.colors = discord?.Colors ?? null;
+        this.conditions = forgescript?.Conditions ?? null;
+    }
+    /** What ForgeScript's `Conditions` (core/Compiler.js) gives for fixed text: `null` without ForgeScript. */
+    condition(op, lhs, rhs) {
+        const fn = this.conditions?.[op];
+        return fn ? !!fn(lhs, rhs) : null;
     }
     /**
      * Checks one literal argument. `text` is the argument after escapes, as ForgeScript resolves it.

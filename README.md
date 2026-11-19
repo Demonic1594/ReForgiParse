@@ -124,7 +124,8 @@ Some things are only known when the bot runs, and are not reported:
 
 - whether an ID, a role or a channel exists, or is the right kind (a thread, a voice channel);
 - values made when the bot runs (`$get[x]`, `$message`);
-- whether a function finds what it reads in the command's event, where it has something else to fall back on (`$channelID` reads the interaction, else the channel). Functions that read only the interaction, one of the event's states, or a message command's words are checked against the command's `type` (`missing-context`).
+- whether a function finds what it reads in the command's event, where it has something else to fall back on (`$channelID` reads the interaction, else the channel). Functions that read only the interaction, one of the event's states, a message command's words, or (for an extension's functions) only its own events' data are checked against the command's `type` (`missing-context`). Within an extension's own events, which of them gives which data is not checked;
+- whether a condition is true, past what its fixed text and the spaces around its operator show.
 
 ### Errors
 
@@ -149,8 +150,10 @@ Some things are only known when the bot runs, and are not reported:
 | `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function. |
 | `stray-bracket` | `$let[a;1]]` | The `]` closes nothing and is printed. |
 | `condition-operator` | `$if[a==1&&b==2;...]`, `$onlyIf[;...]` | Only the first operator is evaluated; an empty condition is false. |
+| `condition-value` | `$if[$get[a] == 1;...]`, `$if[$isBot==True;...]`, `$if[$get[a]>abc;...]`, `$case[ 1 ;...]` | Always false (`!=` always true): `==` and `$case` compare text exactly, spaces included; `<` and `>` compare numbers. |
 | `incomplete-call` | `$if[condition]`, `$while[condition]` | Runs nothing, always stops, or never ends. |
-| `missing-context` | `$option[...]` in a `messageCreate` command, `$newMember` in `messageCreate` | Gives nothing: the event has no interaction, or not that state. |
+| `missing-context` | `$option[...]` in a `messageCreate` command, `$newMember` in `messageCreate`, `$voteUserID` (ReForgeTopGG) in `messageCreate`, `$message` in `voted` | Gives nothing (or, for some extension functions, stops the command): the event has no interaction, not that state, or not that extension's data. |
+| `unreachable-code` | `$stop $sendMessage[...]`, `$loop[3;$break $ping]`, `$let[x;$stop]rest` | Never runs. |
 | `misplaced-branch` | `$else[...]` outside `$ifx`, a second `$if` in `$ifx` | Runs every time, or never. |
 | `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
 | `http-url` | `http://...` as a URL argument | Converted to an invalid URL. |
@@ -165,6 +168,7 @@ Some things are only known when the bot runs, and are not reported:
 
 | Rule | Example | Suggestion |
 |---|---|---|
+| `constant-condition` | `$if[1==1;...]`, `$if[false;...]`, `$onlyIf[a!=b;...]` | Always true or always false: one branch never runs. |
 | `hidden-output` | `$let[ok;$pauseTrack]`, never read | Use `$!pauseTrack`. |
 | `escaped-letter` | `\n` inside an argument | It is the letter `n`. |
 | `function-case` | `$AUTHORID` | Use `$authorID`. |

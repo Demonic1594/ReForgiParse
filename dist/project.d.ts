@@ -70,6 +70,18 @@ export declare function readNatives(dir: string, argType?: Record<number, string
  * interaction (interactionCreate, whose handler runs commands with the interaction).
  */
 export declare function forgeScriptEventModel(forgeDir: string): Map<string, EventModel> | null;
+/**
+ * What an extension's events give a command, and what its functions read, from its source:
+ * - the states its code passes when it runs a command (`states: { giveaway: ... }`), `null` when one is
+ *   not written out where it is passed;
+ * - whether it passes a message command's words (`args`);
+ * - its functions that read only its own events' data ({@link eventDataOf}).
+ */
+export declare function scanExtension(dir: string): {
+    states: Set<string> | null;
+    words: boolean;
+    functions: Map<string, IRawFunction["context"]>;
+};
 /** A custom function as the compiler sees it (`ForgeFunction.asNative`, then `FunctionManager.raw`). */
 export declare function customAsRaw(c: Pick<CustomFunction, "name" | "params" | "brackets" | "firstParamCondition">): IRawFunction;
 //# sourceMappingURL=project.d.ts.map

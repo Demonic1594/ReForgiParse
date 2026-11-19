@@ -25,6 +25,7 @@ const MEDIA_TYPES = new Set(["Sticker", "Emoji", "ApplicationEmoji", "GuildEmoji
 const PURE_TYPES = new Set(["Number", "Boolean", "Time", "Enum", "Permission", "Color", "URL", "OverwritePermission", "BigInt"])
 
 interface ForgeScriptValues {
+    Conditions?: Record<string, (lhs: string, rhs: string | null) => boolean>
     CompiledFunction?: { prototype: Record<string, any>; IdRegex?: RegExp; URLRegex?: RegExp; CDNIdRegex?: RegExp }
 }
 
@@ -35,6 +36,7 @@ export class ValueChecker {
     private readonly cdnRegex: RegExp
     private readonly parseEmoji: (text: string) => { id?: string | null } | null
     private readonly colors: Record<string, number> | null
+    private readonly conditions: Record<string, (lhs: string, rhs: string | null) => boolean> | null
 
     /** @param forgescript The bot's installed ForgeScript module, for its exact resolvers. Without it, a built-in copy of the 2.8.0 rules is used. */
     constructor(forgescript?: ForgeScriptValues | null, discord?: { Colors?: Record<string, number>; parseEmoji?: (text: string) => { id?: string | null } | null } | null) {
@@ -45,6 +47,13 @@ export class ValueChecker {
         this.cdnRegex = cf?.CDNIdRegex ?? /https?:\/\/cdn\.discordapp\.com\/(emojis|stickers)\/(\d+)/
         this.parseEmoji = discord?.parseEmoji ?? ((text) => ({ id: /^<a?:\w+:(\d+)>$/.exec(text)?.[1] ?? null }))
         this.colors = discord?.Colors ?? null
+        this.conditions = forgescript?.Conditions ?? null
+    }
+
+    /** What ForgeScript's `Conditions` (core/Compiler.js) gives for fixed text: `null` without ForgeScript. */
+    condition(op: string, lhs: string, rhs: string | null): boolean | null {
+        const fn = this.conditions?.[op]
+        return fn ? !!fn(lhs, rhs) : null
     }
 
     /**
