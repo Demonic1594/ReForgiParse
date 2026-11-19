@@ -149,6 +149,7 @@ Some things are only known when the bot runs, and are not reported:
 | `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function. |
 | `stray-bracket` | `$let[a;1]]` | The `]` closes nothing and is printed. |
 | `condition-operator` | `$if[a==1&&b==2;...]`, `$onlyIf[;...]` | Only the first operator is evaluated; an empty condition is false. |
+| `condition-value` | `$if[$get[a] == 1;...]`, `$if[$isBot==True;...]`, `$if[$get[a]>abc;...]`, `$case[ 1 ;...]` | Always false (`!=` always true): `==` and `$case` compare text exactly, spaces included; `<` and `>` compare numbers. |
 | `incomplete-call` | `$if[condition]`, `$while[condition]` | Runs nothing, always stops, or never ends. |
 | `missing-context` | `$option[...]` in a `messageCreate` command, `$newMember` in `messageCreate` | Gives nothing: the event has no interaction, or not that state. |
 | `misplaced-branch` | `$else[...]` outside `$ifx`, a second `$if` in `$ifx` | Runs every time, or never. |

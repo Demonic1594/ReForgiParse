@@ -56,6 +56,10 @@ export declare const Rules: {
         readonly severity: "warning";
         readonly description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all.";
     };
+    readonly "condition-value": {
+        readonly severity: "warning";
+        readonly description: "A condition that is false whatever the values: spaces around `==`, a word compared with `<`, `$isBot==True`, or spaces around a condition with no operator.";
+    };
     readonly "unescaped-bracket": {
         readonly severity: "warning";
         readonly description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed.";

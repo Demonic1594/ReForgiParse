@@ -208,6 +208,23 @@ test("condition-operator: these conditions are false, as the message says", asyn
     assert.equal((await run("$if[true;T;F]")).output, "T")
 })
 
+test("condition-value: these conditions are false (or true for !=) whatever the values", async () => {
+    for (const code of ["$let[a;1]$if[$get[a] == 1;T;F]", "$let[a;1]$if[$get[a]== 1;T;F]", "$let[a;1]$if[\n$get[a]==1;T;F]", "$if[ true ;T;F]", "$if[\n$isNumber[1]\n;T;F]", "$if[$isNumber[1]==True;T;F]", "$if[abc<5;T;F]", "$if[$isNumber[1]>0;T;F]", "$if[$ping;T;F]"]) {
+        finding(code, "condition-value")
+        assert.equal((await run(code)).output, "F", code)
+    }
+    finding("$let[a;1]$if[$get[a]!= 1;T;F]", "condition-value")
+    assert.equal((await run("$let[a;1]$if[$get[a]!= 1;T;F]")).output, "T")
+    assert.equal((await run("$let[a;1]$if[$get[a]==1;T;F]")).output, "T")
+    assert.equal((await run("$let[a;1]$if[$get[a]> 0;T;F]")).output, "T")
+    assert.equal((await run("$if[$isNumber[1]==true;T;F]")).output, "T")
+    for (const code of ["$let[a;1]$switch[$get[a];$case[ 1 ;T]$case[default;F]]", "$let[a;1]$switch[$get[a] ;$case[1;T]$case[default;F]]"]) {
+        finding(code, "condition-value")
+        assert.equal((await run(code)).output, "F", code)
+    }
+    assert.equal((await run("$let[a;1]$switch[$get[a];$case[1;T]$case[default;F]]")).output, "T")
+})
+
 test("unescaped-bracket: the first ] closes the function and the rest is printed", async () => {
     finding("$let[x;[Docs](u)]$get[x]", "unescaped-bracket")
     assert.equal((await run("$let[x;[Docs](u)]$get[x]")).output, "(u)][Docs")

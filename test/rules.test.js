@@ -24,6 +24,10 @@ const CASES = {
         bad: ["$if[$get[a]==1==2;x;y]", "$if[$get[a]==1&&$get[b]==2;x;y]", "$if[yes;x;y]"],
         good: ["$if[$get[a]==1;x;y]", "$if[true;x;y]", "$if[$get[flag];x;y]", "$if[$get[a]==\\=\\=;x;y]"],
     },
+    "condition-value": {
+        bad: ["$if[$get[a] == 1;x;y]", "$if[$get[a]!= 1;x;y]", "$if[\n$get[a]==1;x;y]", "$if[ true ;x;y]", "$if[\n$isBot\n;x;y]", "$if[$isBot==True;x;y]", "$if[yes!=$isBot;x;y]", "$if[$get[a]>abc;x;y]", "$if[$isBot>0;x;y]", "$if[$ping;x;y]", "$onlyIf[$get[a] == 1;no]", "$and[$get[a] == 1;1==1]", "$switch[$get[a];$case[ 1 ;x]]", "$switch[\n$get[a]\n;$case[1;x]]"],
+        good: ["$if[$get[a]==1;x;y]", "$if[$isBot==true;x;y]", "$if[$isBot!=false;x;y]", "$if[$isBot;x;y]", "$if[$get[a]>=5;x;y]", "$if[$get[a]> 5;x;y]", "$if[$ping>0;x;y]", "$if[$get[a]==;x;y]", "$if[$!isBot==x;x;y]", "$if[a b==a b;x;y]", "$if[$get[a]==1;\n  x\n;y]", "$switch[$get[a];\n  $case[1;x]\n  $case[default;y]\n]"],
+    },
     "unescaped-bracket": { bad: ["$description[[Docs](https://x.y)]"], good: ["$description[\\[Docs\\](https://x.y)]", "$description[a]"] },
     "escaped-letter": { bad: ["$description[line\\nnext]"], good: ["$description[line\nnext]", "$description[a\\;b]"] },
     "misplaced-operator": { bad: ["$#!ping", "$!$ping"], good: ["$!#ping", "$!ping", "$#ping", "$@[,]ping"] },

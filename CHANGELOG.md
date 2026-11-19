@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.11.0 - 2026-11-19
+
+### Added
+
+- `condition-value` warning: a condition that is false whatever the values (or true, for `!=`), read from ForgeScript's `Conditions` and checked on its interpreter. It covers every function that takes a condition (`$if`, `$onlyIf`, `$while`, `$elseIf`, `$and`, `$or`, `$checkCondition`...) and `$switch`:
+  - spaces or line breaks around `==` or `!=`, or at either end of a condition: ForgeScript compares the text exactly, so `$if[$get[a] == 1;...]` compares `"1 "` with `" 1"`;
+  - spaces or line breaks around a condition with no operator (`$if[ true ;...]`, a condition on its own line), which is then never exactly `true`;
+  - a function that gives only true or false compared with any other text: `$if[$isBot==True;...]`;
+  - `<`, `<=`, `>` or `>=` with a word or a true-or-false function on one side, which ForgeScript reads as NaN: `$if[$get[a]>abc;...]`;
+  - a function that gives only numbers used as a condition on its own: `$if[$ping;...]`;
+  - a `$case` value, or the `$switch` value, with spaces or line breaks around it.
+
 ## 0.10.0 - 2026-11-19
 
 ### Added
