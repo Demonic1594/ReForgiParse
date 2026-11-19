@@ -63,6 +63,14 @@ test("too-few-arguments: the command stops with the error the message quotes", a
     await stopsAsQuoted("$addField[Coins]", "too-few-arguments")
 })
 
+test("invalid-argument in functions that read their own arguments, and for emoji and sticker IDs: the error the message quotes", async () => {
+    for (const code of ["$loop[abc;x]", "$loop[2;x;i;maybe]", "$userCooldown[$authorID;1.5h]", "$emojiName[😀]", "$emojiName[smile]", "$stickerName[cool]", "$emojiGuildID[smile]", "$addButton[id;label;0]", "$addButton[id;label;99]"]) await stopsAsQuoted(code, "invalid-argument")
+    // A BigInt that JavaScript cannot read: ForgeScript's resolver throws, and that error is logged.
+    await stopsAsQuoted("$bigintSum[1;1.5]", "invalid-argument")
+    // A number is an enum value only where the enum has it: ButtonStyle starts at 1.
+    assert.equal((await run("$addButton[id;label;1]")).error, null)
+})
+
 test("invalid-argument: the command stops with the error the message quotes", async () => {
     for (const code of ["$round[abc]", "$wait[1.5h]", "$addButton[id;Hi;primary]", "$ephemeral$addButton[id;Hi;Primary;;yes]"]) await stopsAsQuoted(code, "invalid-argument")
     // And the corrected values run.
@@ -122,6 +130,46 @@ test("misplaced-statement: in a command, ForgeScript stops and sends the error t
         assert.ok(!checkCode(code, table, { values }).some((f) => f.rule === "misplaced-statement"), code)
         assert.equal((await run(code, { command: true })).error, null, code)
     }
+})
+
+test("invalid-argument from a function's own work: ForgeScript logs the error the message quotes", async () => {
+    for (const code of ["$arrayCreate[a;-1]", "$arrayCreate[a;1.5]", "$base[10;99]", "$decodeURI[%E0%A4%A]", "$decodeURIComponent[%]", "$repeat[x;-1]", "$repeat[x;Infinity]", "$replaceRegex[abc;(;g;x]", "$replaceRegex[abc;a;zz;x]"]) await stopsAsQuoted(code, "invalid-argument")
+    // $setTimezone only stores the zone: the next function that uses it fails, with the error quoted.
+    const f = finding("$setTimezone[Bad/Zone]", "invalid-argument")
+    const quoted = /with "([^"]+)"/.exec(f.message)[1]
+    assert.equal((await run("$setTimezone[Bad/Zone]")).error, null)
+    const later = await run("$setTimezone[Bad/Zone]$parseDate[1;Locale]")
+    assert.equal(later.output, null)
+    assert.ok(later.error?.includes(quoted), later.error)
+})
+
+test("$callFunction and $callLocalFunction: ForgeScript stops with the error the message quotes", async () => {
+    for (const code of ["$callLocalFunction[nope]", "$callLocalFunction[add;1;2]$localFunction[add;x;a;b]", "$localFunction[add;$sum[$env[a];$env[b]];a;b]$callLocalFunction[add;1]", "$callFunction[nope]"]) await stopsAsQuoted(code, "invalid-argument")
+    // A custom function the bot has: too few arguments.
+    quiet(() => client.functions.add({ name: "greet", params: ["who"], code: "hi $env[who]" }))
+    const custom = new FunctionTable([...table.byKey.values(), { name: "$greet", aliases: null, args: { required: true, fields: [{}] }, params: [{ name: "who", required: true }], unwrap: true, package: "custom" }])
+    const f = checkCode("$callFunction[greet]", custom, { values }).find((x) => x.rule === "invalid-argument")
+    const quoted = /ForgeScript stops the command: "([^"]+)"/.exec(f.message)[1]
+    const r = await run("$callFunction[greet]")
+    assert.equal(r.output, null)
+    assert.ok(r.error?.includes(quoted), r.error)
+    assert.equal((await run("$callFunction[greet;you]")).output, "hi you")
+})
+
+test("misplaced-branch and $ifx without $if: what ForgeScript does", async () => {
+    const quoted = /fails with "([^"]+)"/.exec(finding("$ifx[$else[b]]", "misplaced-statement").message)[1]
+    const crash = await run("$ifx[$else[b]]")
+    assert.equal(crash.output, null)
+    assert.ok(crash.error?.includes(quoted), crash.error)
+    // Runs every time, outside its block.
+    assert.equal((await run("$else[e]after")).output, "eafter")
+    assert.equal((await run("$case[a;x]after")).output, "xafter")
+    // Never runs, inside it.
+    assert.equal((await run("$ifx[$if[1==2;a]$if[1==1;b]]after")).output, "after")
+    assert.equal((await run("$ifx[$if[1==2;a]$else[b]$else[c]]after")).output, "bafter")
+    assert.equal((await run("$ifx[$if[1==2;a]$let[z;1]]got=$get[z]")).output, "got=")
+    assert.equal((await run("$switch[a;$case[a;x]$case[a;y]]")).output, "x")
+    assert.equal((await run("$switch[a;$let[z;1]$case[a;x]]got=$get[z]")).output, "xgot=")
 })
 
 test("color-value: the embed gets the colour the message says", async () => {

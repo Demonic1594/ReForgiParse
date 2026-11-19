@@ -14,6 +14,8 @@ export interface IParam {
     type?: string;
     /** For an `Enum`: its value names. */
     enum?: readonly string[];
+    /** For an `Enum` from a NativeFunction: the enum itself, which ForgeScript looks the text up in (names and, for a numeric enum, its numbers). */
+    enumObject?: Readonly<Record<string, string | number>>;
 }
 /** A function as ForgeScript's compiler sees it (the shape of `FunctionManager.raw`), with its documented arguments when known. */
 export interface IRawFunction {
@@ -39,6 +41,12 @@ export interface IRawFunction {
         readsVariable?: boolean;
         setsEnvironment?: boolean;
     };
+    /**
+     * For a function that reads its own arguments (not `unwrap`): the positions it sends through
+     * ForgeScript's argument check (`resolveMultipleArgs`, `resolveUnhandledArg`), in the order it
+     * does, read from its source. `undefined` when unknown.
+     */
+    resolved?: readonly number[];
     /** What it does, as its package documents it. */
     description?: string;
     /** The ArgType names of what it returns, when documented. */
@@ -123,6 +131,12 @@ interface ForgeScriptLike {
 }
 /** What a function's compiled source does with `$let` variables and the environment store. */
 export declare function storesOf(file: string | undefined): IRawFunction["stores"];
+/**
+ * The argument positions a NativeFunction's `execute` sends through ForgeScript's argument check, in
+ * order: `resolveMultipleArgs(ctx, 0, 2)` and `resolveUnhandledArg(ctx, 1)`, or every one for
+ * `resolveArgs(ctx)`. `undefined` when the source cannot be read.
+ */
+export declare function resolvedArgsOf(file: string | undefined, count: number): number[] | undefined;
 /** A NativeFunction's argument, described by name. */
 export declare function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam;
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */

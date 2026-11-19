@@ -11,16 +11,22 @@ interface ForgeScriptValues {
         prototype: Record<string, any>;
         IdRegex?: RegExp;
         URLRegex?: RegExp;
+        CDNIdRegex?: RegExp;
     };
 }
 export declare class ValueChecker {
     private readonly proto;
     private readonly self;
     private readonly idRegex;
+    private readonly cdnRegex;
+    private readonly parseEmoji;
     private readonly colors;
     /** @param forgescript The bot's installed ForgeScript module, for its exact resolvers. Without it, a built-in copy of the 2.8.0 rules is used. */
     constructor(forgescript?: ForgeScriptValues | null, discord?: {
         Colors?: Record<string, number>;
+        parseEmoji?: (text: string) => {
+            id?: string | null;
+        } | null;
     } | null);
     /**
      * Checks one literal argument. `text` is the argument after escapes, as ForgeScript resolves it.

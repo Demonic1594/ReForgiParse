@@ -62,7 +62,11 @@ export declare const Rules: {
     };
     readonly "misplaced-statement": {
         readonly severity: "error";
-        readonly description: "`$break` or `$continue` outside `$loop` and `$while`, or `$return` in a command: ForgeScript stops the command and sends an error.";
+        readonly description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command.";
+    };
+    readonly "misplaced-branch": {
+        readonly severity: "warning";
+        readonly description: "`$else`, `$elseIf` or `$case` outside `$ifx` or `$switch` (it runs every time), or code in `$ifx` or `$switch` that is no branch of it (it never runs).";
     };
     readonly "stray-bracket": {
         readonly severity: "warning";
@@ -136,6 +140,17 @@ export interface UncheckedArgument {
  * are left out.
  */
 export declare const UncheckedArguments: Record<string, UncheckedArgument>;
+/**
+ * Functions whose own work fails on some argument values, which their argument types let through: the
+ * same operation as their `execute`, run on the values as ForgeScript resolves them. It throws what
+ * ForgeScript would, and that error is what it logs. Each is run on ForgeScript's interpreter by
+ * test/runtime.test.js. `later`: the value is stored, and a later function fails on it.
+ */
+export declare const ExecuteChecks: Record<string, {
+    args: number[];
+    run: (values: unknown[]) => unknown;
+    later?: string;
+}>;
 /** The parts of the code that ForgeScript prints as written and never runs: the inside of `$escapeCode[...]`. */
 export declare function printedAsWritten(result: ParseResult): Array<{
     start: number;

@@ -5,7 +5,7 @@
 // ForgeScript does with the code, checked in its source (2.8.0) or by running its own resolvers,
 // so a message is a fact about the bot, not a style opinion.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UncheckedArguments = exports.Rules = void 0;
+exports.ExecuteChecks = exports.UncheckedArguments = exports.Rules = void 0;
 exports.printedAsWritten = printedAsWritten;
 exports.checkCode = checkCode;
 exports.declaredSpelling = declaredSpelling;
@@ -30,7 +30,8 @@ exports.Rules = {
     "misplaced-operator": { severity: "warning", description: "`!`, `#` or `@[...]` in the wrong order, or before another `$`: the call is printed as text." },
     "condition-operator": { severity: "warning", description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all." },
     "unescaped-bracket": { severity: "warning", description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed." },
-    "misplaced-statement": { severity: "error", description: "`$break` or `$continue` outside `$loop` and `$while`, or `$return` in a command: ForgeScript stops the command and sends an error." },
+    "misplaced-statement": { severity: "error", description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command." },
+    "misplaced-branch": { severity: "warning", description: "`$else`, `$elseIf` or `$case` outside `$ifx` or `$switch` (it runs every time), or code in `$ifx` or `$switch` that is no branch of it (it never runs)." },
     "stray-bracket": { severity: "warning", description: "A `]` outside any function that no `[` before it opened: it closes nothing and is printed." },
     "color-value": { severity: "warning", description: "A colour ForgeScript reads differently from what was meant (`blue`, `123456`)." },
     "http-url": { severity: "warning", description: "An `http://` link: ForgeScript only accepts `https://`, and turns it into a broken link." },
@@ -95,6 +96,120 @@ const PASSES_ON = {
     $continue: new Set(["$if", "$elseif", "$else", "$ifx", "$switch", "$case", "$scope", "$arrayforeach"]),
     $return: new Set(["$if", "$elseif", "$else", "$ifx", "$switch", "$case", "$scope", "$arrayforeach", "$while"]),
 };
+/**
+ * `$callFunction` of a name that is no custom function of the bot, and `$callLocalFunction` of one no
+ * earlier `$localFunction` defines, or either with fewer arguments than the function's parameters:
+ * ForgeScript stops the command (callFunction.js, callLocalFunction.js, ForgeFunction.call).
+ */
+function callProblems(calls, table, options, add) {
+    const forgescript = (c) => !c.fn.package || c.fn.package === "@tryforge/forgescript";
+    const locals = new Map();
+    const plural = (n) => `${n} argument${n > 1 ? "s" : ""}`;
+    for (const call of [...calls].sort((x, y) => x.start - y.start)) {
+        const name = call.fn.name.toLowerCase();
+        if (!forgescript(call) || !call.fields?.length)
+            continue;
+        const target = literal(call.fields[0]);
+        if (target === null)
+            continue;
+        const given = call.fields.length - 1;
+        const stops = (error, message) => add("invalid-argument", `${message}. ForgeScript stops the command: "${error}"`, call.start, call.end);
+        if (name === "$localfunction") {
+            if (call.fields.length >= 2)
+                locals.set(target, call.fields.length - 2);
+        }
+        else if (name === "$calllocalfunction" && !options.customFunction) {
+            // A custom function's body runs in its caller's context, which may have defined it.
+            const params = locals.get(target);
+            if (params === undefined)
+                stops(`Unknown local function with name ${target}`, `No $localFunction before this one defines "${target}"`);
+            else if (given < params)
+                stops(`Calling local function ${target} requires ${plural(params)}, received ${given}`, `"${target}" takes ${plural(params)}, and this call gives ${given}`);
+        }
+        else if (name === "$callfunction") {
+            const fn = table.get(target);
+            if (!fn || (fn.package !== "custom" && fn.package !== "known")) {
+                stops(`Unknown function with name ${target}`, `"${target}" is not a custom function of this bot (functions made when it runs go in the config's "known")`);
+            }
+            else if (fn.package === "custom") {
+                const required = (fn.params ?? []).filter((p) => p.required).length;
+                if (given < required)
+                    stops(`Calling custom function ${fn.name.replace(/^\$/, "")} requires ${plural(required)}, received ${given}`, `"${target}" takes ${plural(required)}, and this call gives ${given}`);
+            }
+        }
+    }
+}
+/**
+ * `$ifx` and `$switch` run only their own branches, found among the functions directly in their block
+ * (CompiledFunction.getFunctions): `$ifx` its first `$if`, every `$elseIf` and its first `$else`;
+ * `$switch` each `$case`, the first of equal values. Anything else in the block never runs, and those
+ * branches outside their block run every time. `$ifx` without an `$if` fails (ifx.js reads it).
+ */
+function blockProblems(code, result, inPrinted, add) {
+    const forgescript = (c) => !c.fn.package || c.fn.package === "@tryforge/forgescript";
+    const named = (c, name) => forgescript(c) && c.fn.name.toLowerCase() === name;
+    // Where each call is: the call and field it is directly in.
+    const parent = new Map();
+    const visit = (calls, where) => {
+        for (const c of calls) {
+            parent.set(c, where);
+            c.fields?.forEach((f, i) => {
+                for (const part of f.kind === "condition" ? [f.lhs, ...(f.rhs ? [f.rhs] : [])] : [f])
+                    visit(part.functions, { call: c, field: i });
+            });
+        }
+    };
+    visit(result.functions, null);
+    const textOutside = (field) => field.kind === "field" && field.value.replace(/\[SYSTEM_FUNCTION\(\d+\)\]/g, "").trim() !== "";
+    for (const [call, where] of parent) {
+        if (inPrinted(call.start))
+            continue;
+        const inBlock = (block, field) => !!where && named(where.call, block) && where.field === field;
+        if ((named(call, "$else") || named(call, "$elseif")) && !inBlock("$ifx", 0)) {
+            add("misplaced-branch", named(call, "$else") ? `$else is not directly in an $ifx, so it runs its code every time` : `$elseIf is not directly in an $ifx, so it works as a plain $if`, call.start, call.nameEnd);
+        }
+        if (named(call, "$case") && !inBlock("$switch", 1))
+            add("misplaced-branch", `$case is not directly in a $switch's cases, so it runs its code every time`, call.start, call.nameEnd);
+        if (named(call, "$ifx") && call.fields?.[0]) {
+            const block = call.fields[0];
+            const direct = block.kind === "field" ? block.functions : [];
+            if (!direct.some((c) => named(c, "$if"))) {
+                add("misplaced-statement", `$ifx has no $if directly in its block. ForgeScript fails with "TypeError: Cannot read properties of undefined (reading 'execute')", which stops the command`, call.start, call.end);
+                continue;
+            }
+            const firstIf = direct.find((c) => named(c, "$if"));
+            const firstElse = direct.find((c) => named(c, "$else"));
+            for (const c of direct) {
+                if (c === firstIf || c === firstElse || named(c, "$elseif") || named(c, "$c"))
+                    continue;
+                add("misplaced-branch", `${c.name} never runs: $ifx runs only its first $if, its $elseIf and its first $else`, c.start, c.nameEnd);
+            }
+            if (textOutside(block))
+                add("misplaced-branch", `The text in $ifx is never printed: $ifx runs only its $if, $elseIf and $else`, block.start, block.end);
+        }
+        if (named(call, "$switch") && call.fields?.[1]) {
+            const block = call.fields[1];
+            const direct = block.kind === "field" ? block.functions : [];
+            const seen = new Set();
+            for (const c of direct) {
+                if (named(c, "$c"))
+                    continue;
+                if (!named(c, "$case")) {
+                    add("misplaced-branch", `${c.name} never runs: $switch runs only its $case branches`, c.start, c.nameEnd);
+                    continue;
+                }
+                const value = c.fields?.[0] ? literal(c.fields[0]) : null;
+                if (value === null)
+                    continue;
+                if (seen.has(value))
+                    add("misplaced-branch", `This $case never runs: an earlier $case has the same value, ${JSON.stringify(value)}`, c.start, c.nameEnd);
+                seen.add(value);
+            }
+            if (textOutside(block))
+                add("misplaced-branch", `The text in $switch's cases is never printed: $switch runs only its $case branches`, block.start, block.end);
+        }
+    }
+}
 /** `$break`, `$continue` and `$return` whose every enclosing function passes them on to the top of a command. */
 function misplacedStatements(result, options, inPrinted, add) {
     const forgescript = (c) => !c.fn.package || c.fn.package === "@tryforge/forgescript";
@@ -119,6 +234,26 @@ function misplacedStatements(result, options, inPrinted, add) {
     };
     visit(result.functions, []);
 }
+/**
+ * Functions whose own work fails on some argument values, which their argument types let through: the
+ * same operation as their `execute`, run on the values as ForgeScript resolves them. It throws what
+ * ForgeScript would, and that error is what it logs. Each is run on ForgeScript's interpreter by
+ * test/runtime.test.js. `later`: the value is stored, and a later function fails on it.
+ */
+exports.ExecuteChecks = {
+    // new Array(n || 0): a negative, fractional or too large length.
+    $arraycreate: { args: [1], run: ([n]) => new Array(n || 0) },
+    // parseInt(n, from ?? 10).toString(to): a base outside 2 to 36.
+    $base: { args: [1], run: ([to]) => (10).toString(to) },
+    $decodeuri: { args: [0], run: ([text]) => decodeURI(text) },
+    $decodeuricomponent: { args: [0], run: ([text]) => decodeURIComponent(text) },
+    // text.repeat(times): only a negative or infinite count throws (checked without building the text).
+    $repeat: { args: [1], run: ([n]) => (n < 0 || n === Infinity ? "x".repeat(n) : "") },
+    // new RegExp(match, flags)
+    $replaceregex: { args: [1, 2], run: ([match, flags]) => new RegExp(match, flags ?? undefined) },
+    // Stored in ctx.timezone; the time functions after it pass it to toLocaleString.
+    $settimezone: { args: [0], later: "the next function that uses the time zone", run: ([zone]) => new Intl.DateTimeFormat("en-US", { timeZone: zone }) },
+};
 /** Functions that print their argument's code as written instead of running it (`rawValue` in ForgeScript). */
 const AS_WRITTEN = new Set(["$escapecode"]);
 /** What still matters in code that is printed, not run: whether it compiles, and where its brackets close. */
@@ -174,7 +309,9 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         if (declared)
             add("function-case", `Declared as $${declared}; $${call.written.slice(1)} works too, since names ignore case`, call.nameStart, call.nameEnd);
         // Only where ForgeScript resolves the arguments itself: functions like $if read their own fields.
-        const unchecked = !fn.unwrap && (!fn.package || fn.package === "@tryforge/forgescript") ? exports.UncheckedArguments[fn.name.toLowerCase()] : undefined;
+        const listed = !fn.unwrap && (!fn.package || fn.package === "@tryforge/forgescript") ? exports.UncheckedArguments[fn.name.toLowerCase()] : undefined;
+        // A function's own check, read from its source, says the same as a "stops" entry: it is reported below.
+        const unchecked = listed && !(listed.outcome === "stops" && fn.resolved?.includes(listed.arg)) ? listed : undefined;
         if (unchecked && call.fields && call.fields.length <= unchecked.arg && compiles) {
             const arg = fn.params?.[unchecked.arg]?.name ?? `argument ${unchecked.arg + 1}`;
             const end = call.close !== null ? call.close + 1 : call.end;
@@ -188,29 +325,66 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
                 incomplete.add(call);
             }
         }
-        if (call.fields && fn.params && fn.unwrap && compiles) {
-            // In ForgeScript's order (CompiledFunction.resolveArgs): each argument in turn, then the
-            // missing ones. The first refusal stops the command, so nothing after it is reported.
-            let stopped = false;
-            if (options.values) {
-                for (const [i, field] of call.fields.entries()) {
-                    const param = paramAt(fn.params, i);
-                    const text = literal(field);
-                    if (!param || text === null || misnamed(field))
+        const work = compiles && fn.unwrap && options.values && (!fn.package || fn.package === "@tryforge/forgescript") ? exports.ExecuteChecks[fn.name.toLowerCase()] : undefined;
+        const reportedBefore = out.length;
+        // The arguments ForgeScript checks, in the order it does: all of them for an unwrap function
+        // (CompiledFunction.resolveArgs), the ones read from the source for a function that reads its own.
+        const order = !call.fields || !fn.params || !compiles ? null : fn.unwrap ? [...call.fields.keys(), ...fn.params.keys()].filter((i, k, all) => all.indexOf(i) === k) : fn.resolved ?? null;
+        if (order && call.fields && fn.params) {
+            // The first refusal stops the command, so nothing after it is reported.
+            for (const i of order) {
+                const field = call.fields[i];
+                const param = paramAt(fn.params, i);
+                if (!param)
+                    continue;
+                if (!field) {
+                    if (!param.required || (param.rest && i > 0 && i >= fn.params.length))
                         continue;
-                    const problem = options.values.check(param, text, call.name);
-                    if (!problem)
-                        continue;
-                    out.push({ rule: problem.rule, severity: problem.severity, message: problem.message, start: field.start, end: field.end });
-                    if (problem.severity === "error") {
-                        stopped = true;
-                        break;
-                    }
+                    add("too-few-arguments", `${call.name} is missing its argument "${param.name}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${param.name}". Usage: ${(0, table_1.usage)(fn)}`, call.start, call.close !== null ? call.close + 1 : call.end);
+                    break;
+                }
+                const text = literal(field);
+                if (!options.values || text === null || misnamed(field))
+                    continue;
+                const problem = options.values.check(param, text, call.name);
+                if (!problem)
+                    continue;
+                out.push({ rule: problem.rule, severity: problem.severity, message: problem.message, start: field.start, end: field.end });
+                if (problem.severity === "error")
+                    break;
+            }
+        }
+        // Every argument passed: the function's own work, on the values as ForgeScript resolves them.
+        if (work && call.fields && fn.params && !out.slice(reportedBefore).some((f) => f.severity === "error")) {
+            const resolved = work.args.map((i) => {
+                const field = call.fields[i];
+                const param = fn.params[i];
+                const text = field ? literal(field) : "";
+                if (text === null || (field && misnamed(field)))
+                    return undefined;
+                if (!param?.required && text === "")
+                    return null;
+                return param?.type === "Number" ? Number(text) : text;
+            });
+            if (!resolved.includes(undefined)) {
+                let thrown = null;
+                try {
+                    work.run(resolved);
+                }
+                catch (e) {
+                    thrown = e;
+                }
+                if (thrown) {
+                    const i = work.args.find((k) => call.fields[k]) ?? work.args[0];
+                    const at = call.fields[i] ?? call.fields[call.fields.length - 1];
+                    const values = work.args.filter((k) => call.fields[k]).map((k) => `${fn.params[k]?.name} ${JSON.stringify(literal(call.fields[k]) ?? "")}`).join(" and ");
+                    const error = `${thrown.name}: ${thrown.message}`;
+                    if (work.later)
+                        add("invalid-argument", `${call.name} stores ${values}, which ForgeScript cannot use: the command stops at ${work.later}, with "${error}"`, at.start, at.end);
+                    else
+                        add("invalid-argument", `${call.name} cannot use ${values}. ForgeScript stops the command: "${error}"`, at.start, at.end);
                 }
             }
-            const missing = stopped ? null : missingArgument(fn, call.fields);
-            if (missing)
-                add("too-few-arguments", `${call.name} is missing its argument "${missing}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${missing}". Usage: ${(0, table_1.usage)(fn)}`, call.start, call.close !== null ? call.close + 1 : call.end);
         }
         for (const field of call.fields ?? []) {
             if (field.kind === "condition")
@@ -236,6 +410,10 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         }
     }
     misplacedOperators(code, calls, add);
+    if (!result.errors.length)
+        callProblems(calls, table, options, add);
+    if (!result.errors.length)
+        blockProblems(code, result, inPrinted, add);
     if (!result.errors.length)
         misplacedStatements(result, options, inPrinted, add);
     // Code that does not compile never runs: what its variables would do does not matter.

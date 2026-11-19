@@ -61,6 +61,10 @@ Call ForgeScript's resolvers, `Conditions` and `Compiler` instead of reimplement
 
 A function that reads its own arguments (`unwrap: false`, such as `$if` or `$while`) is not covered by ForgeScript's check for a missing argument. What leaving one out does is different for each function, so it is established on ForgeScript's interpreter and recorded in `UncheckedArguments` (`src/rules.ts`) with an example call that `test/runtime.test.js` runs. A function whose outcome cannot be shown without Discord is left out rather than guessed.
 
+### Check every function
+
+`test/every-function.test.js` compares every function name and alias, with every argument count, with ForgeScript's compiler, and every argument type with ForgeScript's own resolver. Before a release, also run `npm run every-function`: every argument ForgeScript checks, in every function, on ForgeScript's interpreter (a few minutes). Values a function's own work fails on are in `ExecuteChecks` (`src/rules.ts`), each with a runtime test.
+
 ### Keep working bots clean
 
 Before a release, run `npx reforgiparse` on working bots with their extensions installed. Treat any finding there as a defect in ReForgiParse until shown otherwise.

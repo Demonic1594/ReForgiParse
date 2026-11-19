@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.9.0 - 2026-11-19
+
+Every ForgeScript function was gone over against its source and ForgeScript's compiler and interpreter. These are now caught.
+
+### Added
+
+- `misplaced-branch` warning:
+  - `$else`, `$elseIf` or `$case` outside `$ifx` or `$switch`, which runs every time;
+  - code in `$ifx` or `$switch` that is no branch of it (text, other functions, a second `$if` or `$else`, a `$case` with the same value as an earlier one), which never runs.
+- `misplaced-statement` also reports `$ifx` with no `$if` directly in its block: ForgeScript fails with a `TypeError`.
+- `invalid-argument` also reports:
+  - the arguments that functions reading their own arguments check (read from each function's source, in its order): `$loop[abc;...]`, `$userCooldown[$authorID;1.5h]`;
+  - `Sticker`, `Emoji`, `ApplicationEmoji`, `GuildEmoji` and `ForumTag` values that are not an ID, a CDN link or (for emojis) `<:name:ID>`: `$emojiName[😀]`;
+  - values a function's own work fails on, with the error it throws: `$repeat[x;-1]`, `$arrayCreate[a;1.5]`, `$base[10;99]`, `$decodeURI`, an invalid `$replaceRegex` pattern or flags, a time zone `$setTimezone` cannot use;
+  - `$callFunction` of a function the bot does not have, `$callLocalFunction` of one no earlier `$localFunction` defines, and either with too few arguments.
+- API: `IRawFunction.resolved`, `IParam.enumObject`, `resolvedArgsOf`, `ExecuteChecks`.
+- `npm run every-function`: every argument ForgeScript checks, in every function, on ForgeScript's interpreter.
+
+### Fixed
+
+- An enum value written as a number was always accepted. ForgeScript looks it up in the enum: `$addButton[id;label;0]` is refused, since button styles start at 1.
+- A BigInt that JavaScript cannot read quoted ForgeScript's usual error. ForgeScript's resolver throws instead, and that error is quoted now ("SyntaxError: Cannot convert 1.5 to a BigInt").
+
 ## 0.8.0 - 2026-11-19
 
 ### Added

@@ -266,6 +266,7 @@ function readNatives(dir, argType) {
                     unwrap: !!data.unwrap && args.length > 0,
                     deprecated: !!data.deprecated,
                     stores: (0, table_1.storesOf)(p),
+                    resolved: data.unwrap ? undefined : (0, table_1.resolvedArgsOf)(p, args.length),
                     description: typeof data.description === "string" ? data.description : undefined,
                     output: (0, table_1.outputNames)(data.output, argType),
                 });

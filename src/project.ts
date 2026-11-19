@@ -11,7 +11,7 @@ import { checkRuleNames, Config, loadConfig } from "./config"
 import { checkScript, Diagnostic } from "./core"
 import { extractCode } from "./extract"
 import { ValueChecker } from "./values"
-import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, outputNames, paramFromNative, storesOf, withParams } from "./table"
+import { FunctionTable, fromMetadata, IFunctionMetadata, INativeArg, IRawFunction, outputNames, paramFromNative, resolvedArgsOf, storesOf, withParams } from "./table"
 
 /** Where a function list came from. */
 export interface FunctionSource {
@@ -236,6 +236,7 @@ export function readNatives(dir: string, argType?: Record<number, string>): { fu
                     unwrap: !!data.unwrap && args.length > 0,
                     deprecated: !!data.deprecated,
                     stores: storesOf(p),
+                    resolved: data.unwrap ? undefined : resolvedArgsOf(p, args.length),
                     description: typeof data.description === "string" ? data.description : undefined,
                     output: outputNames(data.output, argType),
                 })

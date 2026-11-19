@@ -18,26 +18,32 @@ export interface ValueProblem {
 /** Types whose resolver needs Discord (fetches by ID): only the ID's shape can be checked. */
 const ID_TYPES = new Set(["Message", "Channel", "TextChannel", "User", "RoleOrUser", "Member", "AutomodRule", "ScheduledEvent", "SoundboardSound", "StageInstance", "Invite", "Webhook"])
 /** Looked up in the cache by ID: a name never resolves. */
-const CACHE_ID_TYPES = new Set(["Guild", "Role"])
+const CACHE_ID_TYPES = new Set(["Guild", "Role", "ForumTag"])
+/** Fetched by ID, also given as a CDN link (and for emojis as <:name:ID>): CompiledFunction.resolveSticker, resolveEmoji. */
+const MEDIA_TYPES = new Set(["Sticker", "Emoji", "ApplicationEmoji", "GuildEmoji"])
 /** Resolved without Discord: ForgeScript's resolver can run here. */
 const PURE_TYPES = new Set(["Number", "Boolean", "Time", "Enum", "Permission", "Color", "URL", "OverwritePermission", "BigInt"])
 
 interface ForgeScriptValues {
-    CompiledFunction?: { prototype: Record<string, any>; IdRegex?: RegExp; URLRegex?: RegExp }
+    CompiledFunction?: { prototype: Record<string, any>; IdRegex?: RegExp; URLRegex?: RegExp; CDNIdRegex?: RegExp }
 }
 
 export class ValueChecker {
     private readonly proto: Record<string, any> | null
     private readonly self: object | null
     private readonly idRegex: RegExp
+    private readonly cdnRegex: RegExp
+    private readonly parseEmoji: (text: string) => { id?: string | null } | null
     private readonly colors: Record<string, number> | null
 
     /** @param forgescript The bot's installed ForgeScript module, for its exact resolvers. Without it, a built-in copy of the 2.8.0 rules is used. */
-    constructor(forgescript?: ForgeScriptValues | null, discord?: { Colors?: Record<string, number> } | null) {
+    constructor(forgescript?: ForgeScriptValues | null, discord?: { Colors?: Record<string, number>; parseEmoji?: (text: string) => { id?: string | null } | null } | null) {
         const cf = forgescript?.CompiledFunction
         this.proto = cf?.prototype ?? null
         this.self = this.proto ? Object.create(this.proto) : null
         this.idRegex = cf?.IdRegex ?? /^(\d{16,23})$/
+        this.cdnRegex = cf?.CDNIdRegex ?? /https?:\/\/cdn\.discordapp\.com\/(emojis|stickers)\/(\d+)/
+        this.parseEmoji = discord?.parseEmoji ?? ((text) => ({ id: /^<a?:\w+:(\d+)>$/.exec(text)?.[1] ?? null }))
         this.colors = discord?.Colors ?? null
     }
 
@@ -55,14 +61,33 @@ export class ValueChecker {
         })
 
         if (ID_TYPES.has(type)) return this.idRegex.test(text) ? null : refused("an ID (16 to 23 digits)")
+        if (MEDIA_TYPES.has(type)) {
+            if (this.cdnRegex.test(text)) return null
+            // A sticker is only an ID or its link (resolveSticker); emojis are also read as <:name:ID>.
+            const id = type === "Sticker" ? text : this.parseEmoji(text)?.id ?? text
+            // GuildEmoji is looked up in the cache, which has only IDs; the others are fetched by an ID's shape.
+            const ok = type === "GuildEmoji" ? /^\d+$/.test(id) : this.idRegex.test(id)
+            if (ok) return null
+            return refused(type === "Sticker" ? "a sticker's ID or its link: a name is not looked up" : "a custom emoji (<:name:ID>), its ID or its link: a unicode emoji or a name is not looked up")
+        }
         if (CACHE_ID_TYPES.has(type)) return /^\d+$/.test(text) ? null : refused(`an ID: the ${type.toLowerCase()} is looked up by ID, and a name never matches`)
         if (type === "Enum" && param.enum?.length) {
-            if (param.enum.includes(text) || /^\d+$/.test(text)) return null
+            // CompiledFunction.resolveEnum: arg.enum[text]. A number is a value only where the enum has it.
+            if (param.enumObject ? param.enumObject[text] !== undefined : param.enum.includes(text) || /^\d+$/.test(text)) return null
             const other = param.enum.find((v) => v.toLowerCase() === text.toLowerCase())
             return refused(other ? `${other} (letter case matters)` : `one of ${list(param.enum)}`)
         }
         if (!PURE_TYPES.has(type)) return null
 
+        // BigInt(text) throws in ForgeScript's resolver: that error, not the usual one, is what it logs.
+        if (type === "BigInt") {
+            try {
+                BigInt(text)
+            } catch (e) {
+                return { severity: "error", rule: "invalid-argument", message: `${fn}: "${param.name}" must be a whole number, not ${JSON.stringify(text)}. ForgeScript stops the command: "${(e as Error).name}: ${(e as Error).message}"` }
+            }
+            return null
+        }
         const value = this.resolve(type, text, param)
         if (value === NOT_CHECKED) return null
         if (value === undefined) {
