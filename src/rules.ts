@@ -35,6 +35,7 @@ export const Rules = {
     "condition-operator": { severity: "warning", description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all." },
     "unescaped-bracket": { severity: "warning", description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed." },
     "misplaced-statement": { severity: "error", description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command." },
+    "missing-context": { severity: "warning", description: "A function that reads what the command's event does not give (`$option` in a `messageCreate` command): it gives nothing." },
     "misplaced-branch": { severity: "warning", description: "`$else`, `$elseIf` or `$case` outside `$ifx` or `$switch` (it runs every time), or code in `$ifx` or `$switch` that is no branch of it (it never runs)." },
     "stray-bracket": { severity: "warning", description: "A `]` outside any function that no `[` before it opened: it closes nothing and is printed." },
     "color-value": { severity: "warning", description: "A colour ForgeScript reads differently from what was meant (`blue`, `123456`)." },
@@ -55,6 +56,19 @@ export interface CheckOptions {
     values?: ValueChecker
     /** The code is a custom function's body: it can read the caller's `$let` variables. */
     customFunction?: boolean
+    /** What the command's event gives its code, when known: see {@link EventModel}. */
+    event?: EventModel
+}
+
+/** What an event gives a command's code, read from ForgeScript's handler for it. */
+export interface EventModel {
+    name: string
+    /** An interaction (interactionCreate). */
+    interaction: boolean
+    /** The states it sets: `message`, `member`, ... */
+    states: ReadonlySet<string>
+    /** A message command's words ($message). */
+    words: boolean
 }
 
 const COMPILE_RULE: Record<CompileError["kind"], Rule> = {
@@ -349,6 +363,12 @@ export function checkCode(code: string, table: FunctionTable, options: CheckOpti
         // The arguments ForgeScript checks, in the order it does: all of them for an unwrap function
         // (CompiledFunction.resolveArgs), the ones read from the source for a function that reads its own.
         const order = !call.fields || !fn.params || !compiles ? null : fn.unwrap ? [...call.fields.keys(), ...fn.params.keys()].filter((i, k, all) => all.indexOf(i) === k) : fn.resolved ?? null
+        // A function the compiler takes as having no brackets (args null) whose argument is required
+        // ($entitlementConsume in ForgeScript 2.8): it is always resolved without it, and stops.
+        if (!call.fields && compiles && fn.unwrap && fn.args === null) {
+            const missing = fn.params?.find((p) => p.required)
+            if (missing) add("too-few-arguments", `${call.name} is missing its argument "${missing.name}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${missing.name}". It takes no brackets, so the argument cannot be given`, call.start, call.end)
+        }
         if (order && call.fields && fn.params) {
             // The first refusal stops the command, so nothing after it is reported.
             for (const i of order) {
@@ -420,6 +440,17 @@ export function checkCode(code: string, table: FunctionTable, options: CheckOpti
     misplacedOperators(code, calls, add)
     if (!result.errors.length) callProblems(calls, table, options, add)
     if (!result.errors.length) blockProblems(code, result, inPrinted, add)
+    if (options.event && !options.customFunction) {
+        const event = options.event
+        const article = /^[aeiou]/i.test(event.name) ? "an" : "a"
+        for (const call of calls) {
+            const need = call.fn.context
+            if (!need || (call.fn.package && call.fn.package !== "@tryforge/forgescript")) continue
+            if (need.interaction && !event.interaction) add("missing-context", `${call.name} reads the interaction, and ${article} ${event.name} command has none: it does nothing and gives ${/^\$is/i.test(call.fn.name) ? "false" : "nothing"} here`, call.start, call.nameEnd)
+            else if (need.state && !event.states.has(need.state)) add("missing-context", `${call.name} reads the event's ${need.state} state, which ${event.name} does not give: it always gives nothing here`, call.start, call.nameEnd)
+            else if (need.words && !event.words) add("missing-context", `${call.name} reads the words of a message command, and ${article} ${event.name} command has none: it always gives nothing here`, call.start, call.nameEnd)
+        }
+    }
     if (!result.errors.length) misplacedStatements(result, options, inPrinted, add)
     // Code that does not compile never runs: what its variables would do does not matter.
     if (!result.errors.length) variableProblems(calls, options, add)

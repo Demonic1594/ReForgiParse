@@ -64,6 +64,10 @@ export declare const Rules: {
         readonly severity: "error";
         readonly description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command.";
     };
+    readonly "missing-context": {
+        readonly severity: "warning";
+        readonly description: "A function that reads what the command's event does not give (`$option` in a `messageCreate` command): it gives nothing.";
+    };
     readonly "misplaced-branch": {
         readonly severity: "warning";
         readonly description: "`$else`, `$elseIf` or `$case` outside `$ifx` or `$switch` (it runs every time), or code in `$ifx` or `$switch` that is no branch of it (it never runs).";
@@ -115,6 +119,18 @@ export interface CheckOptions {
     values?: ValueChecker;
     /** The code is a custom function's body: it can read the caller's `$let` variables. */
     customFunction?: boolean;
+    /** What the command's event gives its code, when known: see {@link EventModel}. */
+    event?: EventModel;
+}
+/** What an event gives a command's code, read from ForgeScript's handler for it. */
+export interface EventModel {
+    name: string;
+    /** An interaction (interactionCreate). */
+    interaction: boolean;
+    /** The states it sets: `message`, `member`, ... */
+    states: ReadonlySet<string>;
+    /** A message command's words ($message). */
+    words: boolean;
 }
 /** What leaving out a required argument does, for a function that reads its own arguments. */
 export interface UncheckedArgument {

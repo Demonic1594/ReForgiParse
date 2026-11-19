@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.10.0 - 2026-11-19
+
+### Added
+
+- `missing-context` warning: a function that reads what the command's event does not give, so it does nothing and gives nothing (false for the `$is...` checks). What each event gives is read from ForgeScript's handler for it, and what each function reads from its source:
+  - the interaction (38 functions, such as `$option`, `$defer`, `$modal`, `$isButton`), which only `interactionCreate` and application commands have;
+  - one of the event's states (`$newMember`, `$oldMessage`, `$pollAnswerID` and 39 more), given only by the events that set it;
+  - a message command's words (`$message`, `$messageSlice`), which only message events have.
+- `too-few-arguments` reports `$entitlementConsume` written without brackets: ForgeScript declares it with no brackets and a required argument, so it always stops the command.
+- API: `IRawFunction.context`, `contextOf`, `forgeScriptEventModel`, `Project.eventModel`, `ScriptOptions.eventModel`, `CheckOptions.event`.
+
 ## 0.9.0 - 2026-11-19
 
 Every ForgeScript function was gone over against its source and ForgeScript's compiler and interpreter. These are now caught.

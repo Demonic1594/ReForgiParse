@@ -108,7 +108,7 @@ function serve(input = process.stdin, output = process.stdout) {
         if (!doc || !file || !project || !CODE_FILE.test(file))
             return [];
         const rel = path.relative(project.root, file).split(path.sep).join("/");
-        return (0, core_1.checkScript)(doc.text, project.table, { file: rel, properties: project.properties, values: project.values, events: project.events, rules: project.config.rules });
+        return (0, core_1.checkScript)(doc.text, project.table, { file: rel, properties: project.properties, values: project.values, events: project.events, rules: project.config.rules, eventModel: project.eventModel });
     };
     const publish = (uri) => {
         const doc = docs.get(uri);
