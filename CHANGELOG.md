@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.12.0 - 2026-11-19
+
+### Added
+
+- `discarded-response` warning: `$stop` after the command built text or an embed (`Not allowed!$stop`, `$title[...]$stop`). ForgeScript then returns before it sends anything (`Interpreter.run`), so none of it is sent. Which functions keep a `$stop` from reaching the command (`$try`'s code, `$async`, `$coroutine`, `$c`, `$escapeCode`, a `$localFunction`'s body, `$setTimeout`, `$arrayAdvancedSort`) was established on ForgeScript's interpreter for every function that runs code it is given. `$!title[...]` counts, since `!` hides only the output: the embed is still built.
+- `missing-context` within an extension's own events: a function that reads data an event of its package does not give. Examples:
+  - ReForgeDB's `$cooldownData` outside `cooldownExpire`;
+  - ReForgeDB's `$oldData` in `variableCreate`;
+  - ForgeDB's `$oldData` in `variableCreate`, which stops the command;
+  - `$oldGiveaway` in `giveawayStart`.
+
+  The message names the events that do give the data. What each event gives is followed from its handler, through helpers (`runEvent(this, "giveawayEnd", gw, { giveaway: { new: gw } })`), back to where the event is emitted (`emit("variableCreate", { data, event: "variableCreate" })`). Which functions read it is found by running them on stand-in data shaped like each event's, in a separate process, with the result cached. This replaces reading their source for `ctx.runtime.extras`. ReForgeDB's `$data`, `$newData` and `$oldData` were not found by that reading, since they go through a helper.
+- An extension's event gives ForgeScript's state functions the states its own handler passes (ReForgeGiveaways' `giveawayEntryAdd`: `giveaway` and `user`), instead of every state its package passes anywhere.
+- Config option `probe` (default `true`): `false` turns the stand-in runs off.
+- `IRawFunction.builds`, `buildsOf`, `IRawFunction.context.missingIn` and `.givenIn`; the `events` module: `eventSites`, `packageSources`, `readsEventData`, `probeExtension(s)`.
+
+### Changed
+
+- An extension's function that reads its events' data, in another package's event: it is now reported only when it finds no data there. ForgeLinked's `$linkedEvent` gives the event's data in any extension's event.
+- A TypeError whose wording depends on the argument is quoted up to where it differs ("TypeError: Cannot read properties of undefined").
+
 ## 0.11.0 - 2026-11-19
 
 ### Added

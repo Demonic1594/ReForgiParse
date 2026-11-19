@@ -49,6 +49,7 @@ const path = __importStar(require("node:path"));
 const config_1 = require("./config");
 const core_2 = require("./core");
 const extract_1 = require("./extract");
+const events_1 = require("./events");
 const values_1 = require("./values");
 const table_1 = require("./table");
 /** This package's name, as a bot lists it among its dependencies. */
@@ -101,6 +102,7 @@ class Project {
         const sources = [];
         const raw = [];
         const seen = new Set();
+        sourceCache.clear();
         const extensionEvents = [];
         // Each extension's folder and events: what its events give a command, and its functions read.
         const extensions = [];
@@ -208,15 +210,20 @@ class Project {
         }
         const values = new values_1.ValueChecker(forgescript, discord);
         const eventModel = forgeDir ? forgeScriptEventModel(forgeDir) : null;
-        for (const ext of extensions) {
+        const probes = forgeDir && config.probe !== false ? probeEvents(forgeDir, extensions) : extensions.map(() => null);
+        for (const [i, ext] of extensions.entries()) {
             const scan = scanExtension(ext.dir);
-            for (const f of raw)
-                if (f.package === ext.name && !f.context)
-                    f.context = scan.functions.get(f.name.toLowerCase());
+            const probed = probes[i];
+            for (const f of raw) {
+                if (f.package !== ext.name || f.context)
+                    continue;
+                f.context = probed ? probed.get(f.name.toLowerCase()) : scan.functions.get(f.name.toLowerCase());
+            }
             if (!eventModel)
                 continue;
+            const sources = sourcesOf(ext.dir);
             for (const name of ext.events) {
-                const mine = { name, packages: [ext.name], interaction: true, states: scan.states, words: scan.words };
+                const mine = { name, packages: [ext.name], interaction: true, states: eventStates((0, events_1.eventSites)(sources, name)) ?? scan.states, words: scan.words };
                 const other = eventModel.get(name);
                 eventModel.set(name, other ? mergeEvents(other, mine) : mine);
             }
@@ -324,6 +331,88 @@ function forgeScriptEventModel(forgeDir) {
             states.add(m[1]);
         const args = /\bargs(:\s*([^,\n]+))?,/.exec(text);
         out.set(name, { name, packages: ["@tryforge/forgescript"], interaction: name === "interactionCreate", states, words: !!args && args[2]?.trim() !== "[]" });
+    }
+    return out;
+}
+/**
+ * Each extension's functions that read its events' data, found by running them (one child process for all, {@link probeExtensions}):
+ * those that give something with one of its events' data and nothing (or a TypeError) without, with
+ * what they give in each of its events. `null` when the probe could not run.
+ */
+function probeEvents(forgeDir, extensions) {
+    const scanned = extensions.map((ext) => {
+        const sources = sourcesOf(ext.dir);
+        const functions = sources
+            .filter((s) => s.text.includes("NativeFunction") && (0, events_1.readsEventData)(s.text, sources))
+            .map((s) => ({ name: /\bname:\s*["'](\$[A-Za-z0-9_]+)["']/.exec(s.text)?.[1] ?? "", file: s.file }))
+            .filter((f) => f.name);
+        return { ext, sources, functions };
+    });
+    if (!scanned.some((s) => s.functions.length))
+        return extensions.map(() => new Map());
+    // Every extension's events, each function is run in: its own and the others' ("package|event").
+    const events = {};
+    for (const s of scanned)
+        for (const e of s.ext.events)
+            events[`${s.ext.name}|${e}`] = (0, events_1.eventSites)(s.sources, e);
+    const results = (0, events_1.probeExtensions)(forgeDir, scanned.map((s) => ({ functions: s.functions, events: s.functions.length ? events : {} })));
+    return scanned.map((s, i) => {
+        if (!s.functions.length)
+            return new Map();
+        const result = results?.[i];
+        if (!result)
+            return null;
+        const out = new Map();
+        for (const [name, r] of Object.entries(result)) {
+            if (r.none === "value" || r.none === "unknown")
+                continue;
+            const own = Object.entries(r.events).filter(([k]) => k.startsWith(`${s.ext.name}|`));
+            // Data it reads in one of its own events, or its events' data cannot be read from source.
+            if (!own.some(([, o]) => o === "value") && !own.every(([, o]) => o === "unknown"))
+                continue;
+            // Per event name: missing only when it is in every package that has an event of that name.
+            const byName = new Map();
+            for (const [key, o] of Object.entries(r.events)) {
+                const event = key.slice(key.indexOf("|") + 1);
+                byName.set(event, [...(byName.get(event) ?? []), o]);
+            }
+            const missing = {};
+            for (const [event, outcomes] of byName) {
+                if (outcomes.every((o) => o === "nothing"))
+                    missing[event] = null;
+                else if (outcomes.every((o) => typeof o === "object"))
+                    missing[event] = outcomes[0].crash;
+            }
+            const givenIn = own.filter(([, o]) => o === "value").map(([k]) => k.slice(k.indexOf("|") + 1));
+            out.set(name, { event: true, crash: typeof r.none === "object" ? r.none.crash : undefined, missingIn: missing, givenIn });
+        }
+        return out;
+    });
+}
+/** An extension's files, read once per load of a project. */
+const sourceCache = new Map();
+function sourcesOf(dir) {
+    let out = sourceCache.get(dir);
+    if (!out)
+        sourceCache.set(dir, (out = (0, events_1.packageSources)(dir)));
+    return out;
+}
+/**
+ * The states an extension's event gives its commands, from how its handler runs them: `undefined` when
+ * that is not known (no site), `null` when a site's states cannot be read.
+ */
+function eventStates(sites) {
+    if (!sites.length)
+        return undefined;
+    const out = new Set();
+    for (const site of sites) {
+        if (site.states === null)
+            return null;
+        if (site.states?.kind === "object")
+            for (const k of Object.keys(site.states.keys))
+                out.add(k);
+        else if (site.states && site.states.kind !== "none")
+            return null;
     }
     return out;
 }

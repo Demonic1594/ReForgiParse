@@ -35,6 +35,7 @@ export const Rules = {
     "condition-operator": { severity: "warning", description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all." },
     "condition-value": { severity: "warning", description: "A condition that is false whatever the values: spaces around `==`, a word compared with `<`, `$isBot==True`, or spaces around a condition with no operator." },
     "constant-condition": { severity: "info", description: "A condition with fixed text on each side (`$if[1==1;...]`, `$if[false;...]`): always true or always false, so one branch never runs." },
+    "discarded-response": { severity: "warning", description: "`$stop` after the command built text or an embed: ForgeScript then sends nothing, so they are never sent." },
     "unreachable-code": { severity: "warning", description: "Code after `$stop`, `$break`, `$continue` or `$return` in the same block (or in an argument before it): it never runs." },
     "unescaped-bracket": { severity: "warning", description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed." },
     "misplaced-statement": { severity: "error", description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command." },
@@ -259,6 +260,11 @@ function blockProblems(code: string, result: ParseResult, inPrinted: (at: number
     }
 }
 
+/** `a`, `a and b`, `a, b and c`. */
+function list(items: readonly string[]): string {
+    return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`
+}
+
 /** Functions that always end the block they run in (native/limiter/stop.js, native/statement/*.js). */
 const ENDS_BLOCK = new Set(["$stop", "$break", "$continue", "$return"])
 
@@ -318,6 +324,89 @@ function unreachableCode(code: string, result: ParseResult, inPrinted: (at: numb
         }
     }
     block(result.functions, 0, code.length)
+}
+
+/**
+ * Functions that pass a `$stop` in their code on to the command, by argument (`null`: every one): checked
+ * on ForgeScript's interpreter. `$try` keeps one in its first argument, and `$async`, `$coroutine`, `$c`,
+ * `$escapeCode`, a `$localFunction`'s body, `$setTimeout` and `$arrayAdvancedSort`'s comparison keep it,
+ * so they are left out, as are other packages' functions. `$try`'s second argument passes it on, but runs
+ * after its code stopped, which `$onlyIf` and the cooldowns do after sending the response themselves: left out.
+ */
+const PASSES_STOP: Record<string, readonly number[] | null> = {
+    $if: null, $elseif: null, $else: null, $ifx: null, $switch: null, $case: null, $loop: null, $while: null, $scope: null,
+    $function: null, $and: null, $or: null, $checkcondition: null, $onlyif: null,
+    $arrayevery: null, $arrayfilter: null, $arrayfind: null, $arrayfindindex: null, $arrayfindlast: null, $arrayfindlastindex: null,
+    $arrayforeach: null, $arraymap: null, $arrayreduce: null, $arraysome: null,
+}
+
+/** Fields whose text is part of the function's output (a branch, a loop's code), not an argument it reads. */
+const OUTPUT_FIELDS: Record<string, readonly number[]> = {
+    $if: [1, 2], $elseif: [1], $else: [0], $ifx: [0], $switch: [1], $case: [1], $loop: [1], $while: [1], $scope: [0], $try: [0, 1], $function: [0],
+}
+
+/**
+ * A `$stop` that reaches the top of a command after the command built a response (text, or an embed or
+ * component from a function that adds one): ForgeScript then returns before it sends anything
+ * (Interpreter.run), so none of it is sent. What ran before it for sure: what comes before it in its
+ * block, and before each function around it in theirs.
+ */
+function discardedResponse(code: string, result: ParseResult, inPrinted: (at: number) => boolean, add: Add) {
+    const forgescript = (c: Call) => !c.fn.package || c.fn.package === "@tryforge/forgescript"
+    const parts = (f: AnyField): Field[] => (f.kind === "condition" ? [f.lhs, ...(f.rhs ? [f.rhs] : [])] : [f])
+    // Text and builders in [from, to) of a block: text only where it is output.
+    const built = (calls: readonly Call[], from: number, to: number, output: boolean, found: { text: string[]; builders: string[] }) => {
+        let at = from
+        for (const c of calls) {
+            if (c.start >= to) break
+            if (c.end <= from) continue
+            if (output && c.start > at) {
+                const text = code.slice(at, c.start).trim()
+                if (text) found.text.push(text)
+            }
+            at = c.end
+            if (inPrinted(c.start) || !forgescript(c)) continue
+            // `$!title[...]` hides only its output: the embed is still built.
+            // A function's output is left out: whether it prints anything often depends on its arguments.
+            if (c.fn.builds) found.builders.push(c.name)
+            const name = c.fn.name.toLowerCase()
+            if (name === "$c" || name === "$escapecode" || name === "$async" || name === "$coroutine" || name === "$localfunction") continue
+            for (const [i, f] of (c.fields ?? []).entries()) for (const part of parts(f)) built(part.functions, part.start, part.end, output && f.kind === "field" && (OUTPUT_FIELDS[name]?.includes(i) ?? false), found)
+        }
+        if (output && at < to) {
+            const text = code.slice(at, to).trim()
+            if (text) found.text.push(text)
+        }
+    }
+    const visit = (calls: readonly Call[], block: { calls: readonly Call[]; start: number; output: boolean }, path: Array<{ calls: readonly Call[]; start: number; until: number; output: boolean }>) => {
+        for (const call of calls) {
+            if (inPrinted(call.start)) continue
+            const name = call.fn.name.toLowerCase()
+            if (forgescript(call) && name === "$stop") {
+                const found = { text: [] as string[], builders: [] as string[] }
+                built(block.calls, block.start, call.start, block.output, found)
+                for (const p of path) built(p.calls, p.start, p.until, p.output, found)
+                const text = found.text[0]
+                const shown = text ? `the text ${JSON.stringify(text.length > 30 ? `${text.slice(0, 29)}…` : text)}` : undefined
+                const what = [...new Set(found.builders), ...(shown ? [shown] : [])]
+                if (what.length) {
+                    const one = what.length === 1
+                    add("discarded-response", `$stop ends the command before it sends its response, so ${list(what)} ${one ? "is" : "are"} never sent. To send ${one ? "it" : "them"}, use $sendMessage[$channelID;...] before $stop, or stop with a message: $onlyIf[condition;message]`, call.start, call.end)
+                }
+                continue
+            }
+            if (!forgescript(call) || !(name in PASSES_STOP) && !call.fn.unwrap) continue
+            const passes = call.fn.unwrap ? null : PASSES_STOP[name]
+            for (const [i, f] of (call.fields ?? []).entries()) {
+                if (passes && !passes.includes(i)) continue
+                for (const part of parts(f)) {
+                    const output = block.output && f.kind === "field" && (OUTPUT_FIELDS[name]?.includes(i) ?? false)
+                    visit(part.functions, { calls: part.functions, start: part.start, output }, [{ calls: block.calls, start: block.start, until: call.start, output: block.output }, ...path])
+                }
+            }
+        }
+    }
+    visit(result.functions, { calls: result.functions, start: 0, output: true }, [])
 }
 
 /** `$break`, `$continue` and `$return` whose every enclosing function passes them on to the top of a command. */
@@ -523,9 +612,15 @@ export function checkCode(code: string, table: FunctionTable, options: CheckOpti
             const need = call.fn.context
             if (!need) continue
             if (need.event && call.fn.package) {
-                if (event.packages.includes(call.fn.package)) continue
-                const outcome = need.crash ? `ForgeScript stops the command ("${need.crash}")` : "it has no event data to read here"
-                add("missing-context", `${call.name} reads data that only the events of ${call.fn.package} give, and ${article} ${event.name} command is not one of them: ${outcome}`, call.start, call.nameEnd)
+                // ForgeScript's events give no extension data; an extension's event, what the probe found.
+                const forgescript = event.packages.includes("@tryforge/forgescript")
+                const extension = event.packages.some((p) => p !== "@tryforge/forgescript")
+                const missing = extension ? need.missingIn?.[event.name] : need.crash ?? null
+                if (missing === undefined || (forgescript && extension && (need.crash ?? null) !== missing)) continue
+                const own = event.packages.includes(call.fn.package)
+                const where = need.givenIn?.length ? `. It has its data in ${list(need.givenIn)} commands` : ""
+                const outcome = missing ? `ForgeScript stops the command ("${missing}")` : "it gives nothing here"
+                add("missing-context", own ? `${call.name} reads data that ${article} ${event.name} command does not get from ${call.fn.package}: ${outcome}${where}` : `${call.name} reads data that only the events of ${call.fn.package} give, and ${article} ${event.name} command is not one of them: ${outcome}`, call.start, call.nameEnd)
                 continue
             }
             if (call.fn.package && call.fn.package !== "@tryforge/forgescript") continue
@@ -536,6 +631,7 @@ export function checkCode(code: string, table: FunctionTable, options: CheckOpti
     }
     if (!result.errors.length) misplacedStatements(result, options, inPrinted, add)
     if (!result.errors.length) unreachableCode(code, result, inPrinted, add)
+    if (!result.errors.length && !options.customFunction) discardedResponse(code, result, inPrinted, add)
     // Code that does not compile never runs: what its variables would do does not matter.
     if (!result.errors.length) variableProblems(calls, options, add)
     return out.filter((f) => STILL_APPLIES.has(f.rule) || !inPrinted(f.start)).sort((a, b) => a.start - b.start || a.end - b.end)

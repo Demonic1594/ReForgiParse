@@ -12,6 +12,11 @@ export interface Config {
     known?: string[];
     /** For --reindent: spaces per level, or "tab". Default: detected from the code, else 4. */
     indent?: number | "tab";
+    /**
+     * Run the extensions' functions that read their events' data, on stand-in data, to find which of
+     * their events give it (default `true`). With `false`, only other events' commands are checked.
+     */
+    probe?: boolean;
 }
 export declare const CONFIG_FILE = "reforgiparse.config.json";
 export declare class ConfigError extends Error {

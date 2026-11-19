@@ -65,6 +65,10 @@ A function that reads its own arguments (`unwrap: false`, such as `$if` or `$whi
 
 `test/every-function.test.js` compares every function name and alias, with every argument count, with ForgeScript's compiler, and every argument type with ForgeScript's own resolver. Before a release, also run `npm run every-function`: every argument ForgeScript checks, in every function, on ForgeScript's interpreter (a few minutes). Values a function's own work fails on are in `ExecuteChecks` (`src/rules.ts`), each with a runtime test.
 
+### Check extensions' events against their source
+
+What an extension's events give is read from its handlers and emit sites (`src/events.ts`), and which functions read it is found by running them (`src/probe.ts`). `test/fixtures/event-extension` is a small extension for this: add an event or a function there for a new case. Before a release, compare the verdicts with ForgeScript's interpreter on the installed extensions, with each extension's own Context where it has one.
+
 ### Keep working bots clean
 
 Before a release, run `npx reforgiparse` on working bots with their extensions installed. Treat any finding there as a defect in ReForgiParse until shown otherwise.
