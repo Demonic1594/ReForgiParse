@@ -25,7 +25,7 @@ const table = FunctionTable.fromForgeScript(forgescript)
 const values = new ValueChecker(forgescript, discord)
 
 /** Runs code as a command would: its output, the error ForgeScript logs, and the first embed's colour. */
-async function run(code) {
+async function run(code, { command = false } = {}) {
     const log = []
     const out = process.stdout.write
     const err = process.stderr.write
@@ -33,7 +33,8 @@ async function run(code) {
     const container = new Container()
     let output
     try {
-        output = await Interpreter.run({ client, data: Compiler.compile(code), obj: { channel: { id: "1" } }, command: null, container, doNotSend: true, allowTopLevelReturn: true, redirectErrorsToConsole: true })
+        // A command runs without allowTopLevelReturn; only a custom function's body may $return.
+        output = await Interpreter.run({ client, data: Compiler.compile(code), obj: { channel: { id: "1" } }, command: null, container, doNotSend: true, allowTopLevelReturn: !command, redirectErrorsToConsole: true })
     } finally {
         process.stdout.write = out
         process.stderr.write = err
@@ -62,6 +63,14 @@ test("too-few-arguments: the command stops with the error the message quotes", a
     await stopsAsQuoted("$addField[Coins]", "too-few-arguments")
 })
 
+test("invalid-argument in functions that read their own arguments, and for emoji and sticker IDs: the error the message quotes", async () => {
+    for (const code of ["$loop[abc;x]", "$loop[2;x;i;maybe]", "$userCooldown[$authorID;1.5h]", "$emojiName[😀]", "$emojiName[smile]", "$stickerName[cool]", "$emojiGuildID[smile]", "$addButton[id;label;0]", "$addButton[id;label;99]"]) await stopsAsQuoted(code, "invalid-argument")
+    // A BigInt that JavaScript cannot read: ForgeScript's resolver throws, and that error is logged.
+    await stopsAsQuoted("$bigintSum[1;1.5]", "invalid-argument")
+    // A number is an enum value only where the enum has it: ButtonStyle starts at 1.
+    assert.equal((await run("$addButton[id;label;1]")).error, null)
+})
+
 test("invalid-argument: the command stops with the error the message quotes", async () => {
     for (const code of ["$round[abc]", "$wait[1.5h]", "$addButton[id;Hi;primary]", "$ephemeral$addButton[id;Hi;Primary;;yes]"]) await stopsAsQuoted(code, "invalid-argument")
     // And the corrected values run.
@@ -74,6 +83,93 @@ test("invalid-argument and too-few-arguments: only the first argument ForgeScrip
         assert.equal(found.length, 1, `one finding for ${code}: ${JSON.stringify(found.map((f) => f.message))}`)
         await stopsAsQuoted(code, found[0].rule)
     }
+})
+
+test("incomplete-call and too-few-arguments for functions that read their own arguments: each outcome, on ForgeScript", async () => {
+    const { UncheckedArguments } = require("..")
+    const { spawnSync } = require("node:child_process")
+    for (const [name, entry] of Object.entries(UncheckedArguments)) {
+        // Newer functions ($arrayFilter is from ForgeScript 2.7) are checked where they exist.
+        if (!table.get(name)) continue
+        const code = entry.example
+        const found = checkCode(code, table, { values, customFunction: true }).filter((f) => f.rule === "incomplete-call" || f.rule === "too-few-arguments")
+        assert.equal(found.length, 1, `${code}: ${JSON.stringify(found)}`)
+        if (entry.outcome === "never-ends") {
+            // In a process of its own: the command does not finish.
+            const script = `const f = require(${JSON.stringify(require.resolve("@tryforge/forgescript"))}); process.stdout.write = () => true; const c = new f.ForgeClient({ intents: ["Guilds"] }); f.Interpreter.run({ client: c, data: f.Compiler.compile(${JSON.stringify(code)}), obj: { channel: { id: "1" } }, command: null, doNotSend: true }).then(() => process.exit(0))`
+            const r = spawnSync(process.execPath, ["-e", script], { timeout: 4000 })
+            assert.ok(r.error?.code === "ETIMEDOUT" || r.signal, `${code} never ends`)
+            continue
+        }
+        const r = await run(code)
+        if (entry.outcome === "stops") await stopsAsQuoted(code, "too-few-arguments")
+        else if (entry.outcome === "crashes") {
+            assert.equal(r.output, null, `${code} stops`)
+            assert.ok(r.error?.includes(`TypeError: Cannot read properties of undefined (reading '${entry.reads}')`), `${code}: ${r.error}`)
+            assert.ok(found[0].message.includes(`(reading '${entry.reads}')`))
+        } else if (entry.outcome === "always-stops") assert.deepEqual([r.output, r.error], [null, null], `${code} stops, with no error`)
+        else assert.ok(r.output !== null && r.error === null, `${code} runs: ${JSON.stringify(r)}`)
+    }
+})
+
+test("an empty condition: ForgeScript reads it as false", async () => {
+    assert.equal((await run("$if[;yes;no]")).output, "no")
+    assert.equal((await run("$onlyIf[;stopped]after")).output, null)
+    assert.equal((await run("$and[1==1;]")).output, "false")
+})
+
+test("misplaced-statement: in a command, ForgeScript stops and sends the error the message quotes; where it is allowed, it does not", async () => {
+    for (const code of ["$if[1==1;$break]after", "x$continue", "$scope[$arrayLoad[a;,;1]$arrayForEach[a;v;$break]]after", "$return[r]", "$ifx[$if[1==1;$return[r]]]after", "$while[1==1;$return[r]]after", "$switch[a;$case[a;$break]]after"]) {
+        const f = finding(code, "misplaced-statement")
+        const quoted = /sends "([^"]+)"/.exec(f.message)[1]
+        const r = await run(code, { command: true })
+        assert.equal(r.output, null, `${code} stops the command`)
+        assert.ok(r.error?.includes(quoted), `${code}: ForgeScript logs ${JSON.stringify(r.error)}`)
+    }
+    for (const code of ["$loop[2;$break]after", "$loop[2;$scope[$continue]]after", "$try[$break]after", "$loop[1;$return[r]]after", "$async[$break]after"]) {
+        assert.ok(!checkCode(code, table, { values }).some((f) => f.rule === "misplaced-statement"), code)
+        assert.equal((await run(code, { command: true })).error, null, code)
+    }
+})
+
+test("invalid-argument from a function's own work: ForgeScript logs the error the message quotes", async () => {
+    for (const code of ["$arrayCreate[a;-1]", "$arrayCreate[a;1.5]", "$base[10;99]", "$decodeURI[%E0%A4%A]", "$decodeURIComponent[%]", "$repeat[x;-1]", "$repeat[x;Infinity]", "$replaceRegex[abc;(;g;x]", "$replaceRegex[abc;a;zz;x]"]) await stopsAsQuoted(code, "invalid-argument")
+    // $setTimezone only stores the zone: the next function that uses it fails, with the error quoted.
+    const f = finding("$setTimezone[Bad/Zone]", "invalid-argument")
+    const quoted = /with "([^"]+)"/.exec(f.message)[1]
+    assert.equal((await run("$setTimezone[Bad/Zone]")).error, null)
+    const later = await run("$setTimezone[Bad/Zone]$parseDate[1;Locale]")
+    assert.equal(later.output, null)
+    assert.ok(later.error?.includes(quoted), later.error)
+})
+
+test("$callFunction and $callLocalFunction: ForgeScript stops with the error the message quotes", async () => {
+    for (const code of ["$callLocalFunction[nope]", "$callLocalFunction[add;1;2]$localFunction[add;x;a;b]", "$localFunction[add;$sum[$env[a];$env[b]];a;b]$callLocalFunction[add;1]", "$callFunction[nope]"]) await stopsAsQuoted(code, "invalid-argument")
+    // A custom function the bot has: too few arguments.
+    quiet(() => client.functions.add({ name: "greet", params: ["who"], code: "hi $env[who]" }))
+    const custom = new FunctionTable([...table.byKey.values(), { name: "$greet", aliases: null, args: { required: true, fields: [{}] }, params: [{ name: "who", required: true }], unwrap: true, package: "custom" }])
+    const f = checkCode("$callFunction[greet]", custom, { values }).find((x) => x.rule === "invalid-argument")
+    const quoted = /ForgeScript stops the command: "([^"]+)"/.exec(f.message)[1]
+    const r = await run("$callFunction[greet]")
+    assert.equal(r.output, null)
+    assert.ok(r.error?.includes(quoted), r.error)
+    assert.equal((await run("$callFunction[greet;you]")).output, "hi you")
+})
+
+test("misplaced-branch and $ifx without $if: what ForgeScript does", async () => {
+    const quoted = /fails with "([^"]+)"/.exec(finding("$ifx[$else[b]]", "misplaced-statement").message)[1]
+    const crash = await run("$ifx[$else[b]]")
+    assert.equal(crash.output, null)
+    assert.ok(crash.error?.includes(quoted), crash.error)
+    // Runs every time, outside its block.
+    assert.equal((await run("$else[e]after")).output, "eafter")
+    assert.equal((await run("$case[a;x]after")).output, "xafter")
+    // Never runs, inside it.
+    assert.equal((await run("$ifx[$if[1==2;a]$if[1==1;b]]after")).output, "after")
+    assert.equal((await run("$ifx[$if[1==2;a]$else[b]$else[c]]after")).output, "bafter")
+    assert.equal((await run("$ifx[$if[1==2;a]$let[z;1]]got=$get[z]")).output, "got=")
+    assert.equal((await run("$switch[a;$case[a;x]$case[a;y]]")).output, "x")
+    assert.equal((await run("$switch[a;$let[z;1]$case[a;x]]got=$get[z]")).output, "xgot=")
 })
 
 test("color-value: the embed gets the colour the message says", async () => {

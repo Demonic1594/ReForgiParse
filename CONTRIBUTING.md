@@ -30,6 +30,7 @@ Every change is compared with `new Compiler(undefined, code).compile()` from the
 | `npm run parity` | Hand-written corpus and 20,000 seeded generated inputs. |
 | `REFORGIPARSE_CORPUS=<folder> npm run parity` | Every ForgeScript snippet in a folder of bots or documentation. |
 | `npm i --no-save @tryforge/forgescript@2.5.0 && npm test`, then `npm ci` | The oldest supported ForgeScript version. |
+| The same for each version `npm view @tryforge/forgescript versions` lists in the peer range | Before a release: CI tests only the oldest and the newest. |
 
 The tree, the template and the compile errors (message, line and column) must be identical. ForgeScript defines the language, so any difference is a defect in ReForgiParse, including differences in ForgeScript's quirks.
 
@@ -55,6 +56,14 @@ A message that quotes a ForgeScript error must match the logged text exactly. Do
 ### Prefer ForgeScript's own code
 
 Call ForgeScript's resolvers, `Conditions` and `Compiler` instead of reimplementing their logic. Checks then follow the ForgeScript version installed in the bot.
+
+### Check what a function does without each argument
+
+A function that reads its own arguments (`unwrap: false`, such as `$if` or `$while`) is not covered by ForgeScript's check for a missing argument. What leaving one out does is different for each function, so it is established on ForgeScript's interpreter and recorded in `UncheckedArguments` (`src/rules.ts`) with an example call that `test/runtime.test.js` runs. A function whose outcome cannot be shown without Discord is left out rather than guessed.
+
+### Check every function
+
+`test/every-function.test.js` compares every function name and alias, with every argument count, with ForgeScript's compiler, and every argument type with ForgeScript's own resolver. Before a release, also run `npm run every-function`: every argument ForgeScript checks, in every function, on ForgeScript's interpreter (a few minutes). Values a function's own work fails on are in `ExecuteChecks` (`src/rules.ts`), each with a runtime test.
 
 ### Keep working bots clean
 

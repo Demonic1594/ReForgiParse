@@ -21,6 +21,8 @@ export interface IParam {
     type?: string
     /** For an `Enum`: its value names. */
     enum?: readonly string[]
+    /** For an `Enum` from a NativeFunction: the enum itself, which ForgeScript looks the text up in (names and, for a numeric enum, its numbers). */
+    enumObject?: Readonly<Record<string, string | number>>
 }
 
 /** A function as ForgeScript's compiler sees it (the shape of `FunctionManager.raw`), with its documented arguments when known. */
@@ -43,6 +45,12 @@ export interface IRawFunction {
     package?: string
     /** What it does with the two variable stores, read from its source when known. */
     stores?: { setsVariable?: boolean; readsVariable?: boolean; setsEnvironment?: boolean }
+    /**
+     * For a function that reads its own arguments (not `unwrap`): the positions it sends through
+     * ForgeScript's argument check (`resolveMultipleArgs`, `resolveUnhandledArg`), in the order it
+     * does, read from its source. `undefined` when unknown.
+     */
+    resolved?: readonly number[]
     /** What it does, as its package documents it. */
     description?: string
     /** The ArgType names of what it returns, when documented. */
@@ -190,11 +198,57 @@ export function storesOf(file: string | undefined): IRawFunction["stores"] {
     }
 }
 
+/**
+ * The argument positions a NativeFunction's `execute` sends through ForgeScript's argument check, in
+ * order: `resolveMultipleArgs(ctx, 0, 2)` and `resolveUnhandledArg(ctx, 1)`, or every one for
+ * `resolveArgs(ctx)`. `undefined` when the source cannot be read.
+ */
+export function resolvedArgsOf(file: string | undefined, count: number): number[] | undefined {
+    if (!file) return undefined
+    let text: string
+    try {
+        text = require("node:fs").readFileSync(file, "utf8")
+    } catch {
+        return undefined
+    }
+    // Only calls made directly in execute's body: one inside a callback or a loop (a sort's comparison,
+    // say) does not stop the command when it fails.
+    const start = text.indexOf("{", Math.max(0, text.indexOf("execute(")))
+    if (start < 0) return undefined
+    let body = ""
+    for (let i = start + 1, depth = 1; i < text.length && depth > 0; i++) {
+        const c = text[i]
+        if (c === '"' || c === "'" || c === "`") {
+            const end = text.indexOf(c, i + 1)
+            if (depth === 1) body += text.slice(i, end + 1)
+            i = end
+            continue
+        }
+        if (c === "{") depth++
+        else if (c === "}") depth--
+        else if (depth === 1) body += c
+    }
+    // A function that can finish successfully before its checks ($awaitModalSubmit outside an interaction)
+    // checks only sometimes: nothing is counted, rather than a claim that holds only in some events.
+    const firstCheck = body.search(/resolve(MultipleArgs|UnhandledArg|Args)"?\]?\(ctx/)
+    const earlyReturn = body.search(/\breturn this\.(success|successJSON|stop)\b/)
+    if (earlyReturn >= 0 && (firstCheck < 0 || earlyReturn < firstCheck)) return []
+    if (/resolveArgs"?\]?\(ctx\)/.test(body)) return Array.from({ length: count }, (_, i) => i)
+    const out: number[] = []
+    for (const m of body.matchAll(/resolve(MultipleArgs|UnhandledArg)"?\]?\(ctx((?:\s*,\s*\d+)+)\s*[,)]/g)) {
+        for (const n of m[2].split(",").filter((x) => x.trim())) {
+            const i = Number(n.trim())
+            if (Number.isInteger(i) && !out.includes(i)) out.push(i)
+        }
+    }
+    return out
+}
+
 /** A NativeFunction's argument, described by name. */
 export function paramFromNative(a: INativeArg, argType?: Record<number, string>): IParam {
     const type = typeof a.type === "number" ? argType?.[a.type] : a.type
     const values = a.enum && typeof a.enum === "object" ? Object.keys(a.enum).filter((k) => Number.isNaN(Number(k))) : undefined
-    return { name: a.name, required: !!a.required, rest: !!a.rest, type, enum: values }
+    return { name: a.name, required: !!a.required, rest: !!a.rest, type, enum: values, enumObject: a.enum && typeof a.enum === "object" ? a.enum : undefined }
 }
 
 /** `FunctionManager.raw`, with each function's documented arguments from its definition. */
@@ -210,6 +264,7 @@ export function withParams(forgescript: ForgeScriptLike): IRawFunction[] {
             deprecated: !!data.deprecated,
             package: "@tryforge/forgescript",
             stores: storesOf(native.path),
+            resolved: data.unwrap ? undefined : resolvedArgsOf(native.path, data.args?.length ?? 0),
             description: typeof data.description === "string" ? data.description : undefined,
             output: outputNames(data.output, forgescript.ArgType),
         }

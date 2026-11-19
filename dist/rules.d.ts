@@ -36,6 +36,10 @@ export declare const Rules: {
         readonly severity: "warning";
         readonly description: "Brackets after a function that takes no arguments: they and their text are printed.";
     };
+    readonly "incomplete-call": {
+        readonly severity: "warning";
+        readonly description: "A function without a required argument that ForgeScript does not check for (`$if[condition]`): it runs, and does nothing, always stops, or never ends.";
+    };
     readonly "unknown-function": {
         readonly severity: "warning";
         readonly description: "A `$name` that is no function here, so it is printed as text.";
@@ -55,6 +59,14 @@ export declare const Rules: {
     readonly "unescaped-bracket": {
         readonly severity: "warning";
         readonly description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed.";
+    };
+    readonly "misplaced-statement": {
+        readonly severity: "error";
+        readonly description: "`$break` or `$continue` outside `$loop` and `$while`, `$return` in a command, or `$ifx` without an `$if`: ForgeScript stops the command.";
+    };
+    readonly "misplaced-branch": {
+        readonly severity: "warning";
+        readonly description: "`$else`, `$elseIf` or `$case` outside `$ifx` or `$switch` (it runs every time), or code in `$ifx` or `$switch` that is no branch of it (it never runs).";
     };
     readonly "stray-bracket": {
         readonly severity: "warning";
@@ -104,6 +116,41 @@ export interface CheckOptions {
     /** The code is a custom function's body: it can read the caller's `$let` variables. */
     customFunction?: boolean;
 }
+/** What leaving out a required argument does, for a function that reads its own arguments. */
+export interface UncheckedArgument {
+    /** The argument's position. */
+    arg: number;
+    /**
+     * `stops`: ForgeScript's own check stops the command. `crashes`: an internal error stops it.
+     * `runs`: the function runs without it. `always-stops`: it always stops the command, with no error.
+     * `never-ends`: the command never finishes.
+     */
+    outcome: "stops" | "crashes" | "runs" | "always-stops" | "never-ends";
+    /** For `runs`: what the function then does. */
+    does?: string;
+    /** For `crashes`: the property ForgeScript's TypeError names. */
+    reads?: string;
+    /** A call that leaves the argument out, run on ForgeScript's interpreter by the tests. */
+    example: string;
+}
+/**
+ * ForgeScript's functions that read their own arguments (not `unwrap`), so that a required one left
+ * out is not caught by ForgeScript's usual check: what each does without it. Each entry is run on
+ * ForgeScript's interpreter by test/runtime.test.js. Functions whose outcome needs Discord to show
+ * are left out.
+ */
+export declare const UncheckedArguments: Record<string, UncheckedArgument>;
+/**
+ * Functions whose own work fails on some argument values, which their argument types let through: the
+ * same operation as their `execute`, run on the values as ForgeScript resolves them. It throws what
+ * ForgeScript would, and that error is what it logs. Each is run on ForgeScript's interpreter by
+ * test/runtime.test.js. `later`: the value is stored, and a later function fails on it.
+ */
+export declare const ExecuteChecks: Record<string, {
+    args: number[];
+    run: (values: unknown[]) => unknown;
+    later?: string;
+}>;
 /** The parts of the code that ForgeScript prints as written and never runs: the inside of `$escapeCode[...]`. */
 export declare function printedAsWritten(result: ParseResult): Array<{
     start: number;

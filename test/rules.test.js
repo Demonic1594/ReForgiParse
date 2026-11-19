@@ -15,8 +15,8 @@ const messages = (code, rule) => checkCode(code, table, { values }).filter((f) =
 
 const CASES = {
     "invalid-argument": {
-        bad: ["$round[abc]", "$addButton[id;label;primary]", "$ephemeral$addButton[id;label;Primary;;yes]", "$wait[1.5h]", "$sendMessage[;hi]", "$hasPerms[$guildID;$authorID;manageMessages]"],
-        good: ["$round[1.5]", "$addButton[id;label;Primary]", "$addButton[id;label;Primary;;true]", "$wait[1h30m]", "$sendMessage[$channelID;hi]", "$hasPerms[$guildID;$authorID;ManageMessages]", "$round[$get[x]]", "$addButton[id;label;0]"],
+        bad: ["$loop[abc;x]", "$loop[2;x;i;maybe]", "$userCooldown[$authorID;1.5h]", "$emojiName[😀]", "$emojiName[smile]", "$stickerName[cool]", "$stickerName[<:smile:123456789012345678>]", "$emojiGuildID[smile]", "$getForumTag[$channelID;tagname]", "$round[abc]", "$addButton[id;label;primary]", "$addButton[id;label;0]", "$addButton[id;label;99]", "$ephemeral$addButton[id;label;Primary;;yes]", "$wait[1.5h]", "$sendMessage[;hi]", "$hasPerms[$guildID;$authorID;manageMessages]"],
+        good: ["$loop[2;x]", "$loop[2;x;i;true]", "$userCooldown[$authorID;1h30m]", "$emojiName[<:smile:123456789012345678>]", "$emojiName[123456789012345678]", "$emojiName[https://cdn.discordapp.com/emojis/123456789012345678.png]", "$stickerName[123456789012345678]", "$emojiGuildID[<:smile:123456789012345678>]", "$getForumTag[$channelID;123456789012345678]", "$round[1.5]", "$addButton[id;label;Primary]", "$addButton[id;label;Primary;;true]", "$wait[1h30m]", "$sendMessage[$channelID;hi]", "$hasPerms[$guildID;$authorID;ManageMessages]", "$round[$get[x]]", "$addButton[id;label;1]"],
     },
     "color-value": { bad: ["$color[blue]", "$color[red]", "$color[123456]"], good: ["$color[Blue]", "$color[#ff0000]", "$color[ff0000]", "$color[Random]", "$color[0]", "$color[$get[c]]"] },
     "http-url": { bad: ["$createGuild[Test;http://example.com/a.png]"], good: ["$createGuild[Test;https://example.com/a.png]", "$image[http://example.com/a.png]"] },
@@ -34,13 +34,25 @@ const CASES = {
     "function-case": { bad: ["$AUTHORID", "$authorid"], good: ["$authorID"] },
     "too-few-arguments": { bad: ["$addField[Coins]"], good: ["$addField[Coins;5]", "$if[1==1]"] },
     "unexpected-brackets": { bad: ["$ping[x]"], good: ["$ping"] },
+    "incomplete-call": { bad: ["$if[$authorID==1]", "$while[1==1]", "$onlyForUsers[Not for you]", "$loop[3]"], good: ["$if[$authorID==1;yes]", "$while[1==2;x]", "$onlyForUsers[Not for you;123456789012345678]", "$loop[3;x]"] },
+    "misplaced-statement": {
+        bad: ["$ifx[]", "$ifx[hello]", "$ifx[$scope[$if[$authorID==1;a]]]", "$break", "x$continue", "$if[$authorID==1;$break]", "$scope[$arrayLoad[a;,;1]$arrayForEach[a;v;$break]]", "$return[r]", "$ifx[$if[$authorID==1;$return[r]]]", "$while[$authorID==1;$return[r]]"],
+        good: ["$loop[2;$break]", "$while[$authorID==1;$if[$authorID==1;$break]]", "$loop[2;$scope[$continue]]", "$try[$break]", "$loop[1;$return[r]]", "$arrayLoad[a;,;1]$arrayMap[a;v;$return[v]]", "$async[$break]", "$onlyIf[$authorID==1;$break]", "$escapeCode[$break]"],
+    },
+    "misplaced-branch": {
+        bad: ["$else[e]", "$elseIf[$authorID==1;a]", "$case[a;x]", "$ifx[$if[$authorID==1;a]$if[$authorID==2;b]]", "$ifx[$if[$authorID==1;a]$else[b]$else[c]]", "$ifx[$if[$authorID==1;a]text]", "$ifx[$if[$authorID==1;a]$ping]", "$switch[a;$case[a;x]$case[a;y]]", "$switch[a;hello$case[a;x]]", "$switch[a;$ping$case[a;x]]"],
+        good: ["$ifx[$if[$authorID==1;a]$elseIf[$authorID==2;b]$else[c]]", "$ifx[\n  $if[$authorID==1;a]\n  $else[b]\n]", "$switch[a;$case[a;x]$case[b;y]$case[default;d]]", "$ifx[$if[$authorID==1;a]$c[note]]"],
+    },
     "stray-bracket": { bad: ["$let[a;1]]", "$if[1==1;yes]]", "done]", "a] [b]"], good: ["Page [1/3]", "$description[x]", "\\]", "$let[a;1]", "$ping[x]", "$get]", "[[a]]"] },
 }
 
+// An example whose functions the installed ForgeScript lacks ($getForumTag is from 2.7) is skipped there.
+const available = (code) => [...code.matchAll(/\$[!#]?([A-Za-z]+)\[/g)].every((m) => table.get(m[1]))
+
 for (const [rule, { bad, good }] of Object.entries(CASES)) {
     test(`${rule}: found where it applies, not elsewhere`, () => {
-        for (const code of bad) assert.ok(rules(code).includes(rule), `${rule} expected in ${JSON.stringify(code)}, got ${JSON.stringify(rules(code))}`)
-        for (const code of good) assert.ok(!rules(code).includes(rule), `${rule} not expected in ${JSON.stringify(code)}`)
+        for (const code of bad.filter(available)) assert.ok(rules(code).includes(rule), `${rule} expected in ${JSON.stringify(code)}, got ${JSON.stringify(rules(code))}`)
+        for (const code of good.filter(available)) assert.ok(!rules(code).includes(rule), `${rule} not expected in ${JSON.stringify(code)}`)
     })
 }
 
@@ -125,4 +137,86 @@ test("code inside $escapeCode is printed as written, never run: only compile and
     assert.deepEqual(rules("$escapeCode[$let[a;1]]$get[a]"), ["unset-variable"])
     // $coroutine runs its code out of sight: the variable rules stand down.
     assert.deepEqual(rules("$let[a;1]$coroutine[$get[a]]"), [])
+})
+
+test("a required argument ForgeScript does not check for: what leaving it out does", () => {
+    // ForgeScript's own check stops the command.
+    assert.deepEqual(rules("$cooldown[daily]"), ["too-few-arguments"])
+    assert.match(messages("$cooldown[daily]", "too-few-arguments")[0], /ForgeScript stops the command: "Function \$cooldown is missing argument duration"/)
+    // An internal error stops it.
+    assert.match(messages("$switch[x]", "too-few-arguments")[0], /^\$switch is missing its argument "cases"\. ForgeScript does not check for it, and fails with "TypeError: Cannot read properties of undefined \(reading 'functions'\)", which stops the command\. Usage: /)
+    // The function runs without it.
+    assert.match(messages("$if[$authorID==1]", "incomplete-call")[0], /^\$if has no "if true", which ForgeScript does not check: it checks the condition, running any function in it, and then runs nothing\. Usage: \$if\[/)
+    assert.match(messages("$while[1==1]", "incomplete-call")[0], /never ends while it is true/)
+    assert.match(messages("$onlyForUsers[Not for you]", "incomplete-call")[0], /always stops the command/)
+    // Only when the argument is absent, not when it is there but written by the bot when it runs.
+    assert.deepEqual(rules("$if[$authorID==1;$get[x]]", { customFunction: true }), [])
+})
+
+test("an empty condition is always false", () => {
+    for (const code of ["$if[;yes;no]", "$if[ ;yes;no]", "$onlyIf[;stopped]", "$and[$authorID==1;]"]) {
+        const m = messages(code, "condition-operator")
+        assert.equal(m.length, 1, code)
+        assert.match(m[0], /is empty, which ForgeScript reads as false/, code)
+    }
+    assert.deepEqual(rules("$if[$get[a];yes;no]", { customFunction: true }), [])
+    // $if[] is one mistake: it has nothing to run, which the incomplete-call finding says.
+    assert.deepEqual(rules("$if[]"), ["incomplete-call"])
+})
+
+test("misplaced-statement: says what ForgeScript sends, and stays quiet in custom functions", () => {
+    assert.match(messages("$if[$authorID==1;$break]", "misplaced-statement")[0], /^\$break is not inside \$loop or \$while: when it runs, ForgeScript stops the command and sends ":x: Break statements are not allowed in outer scopes\."$/)
+    assert.match(messages("$return[r]", "misplaced-statement")[0], /^\$return only returns from a custom function, \$loop, \$try or an array function's code: here, when it runs, ForgeScript stops the command and sends ":x: Return statements are not allowed in outer scopes\."\. To end the command, use \$stop$/)
+    // A custom function's body may $return.
+    assert.ok(!rules("$return[r]", { customFunction: true }).includes("misplaced-statement"))
+})
+
+test("functions that read their own arguments: the ones ForgeScript checks are read from its source", () => {
+    const fn = (name) => table.get(name)
+    assert.deepEqual(fn("$loop").resolved, [0, 2, 3])
+    assert.deepEqual(fn("$cooldown").resolved, [1, 0])
+    assert.deepEqual(fn("$if").resolved, [])
+    // A check inside a callback (the sort's comparison) does not stop the command: not counted.
+    assert.deepEqual(fn("$arrayAdvancedSort").resolved, [0, 1, 2, 4])
+    // Checks made only after it may already have finished (outside an interaction) are not counted.
+    assert.deepEqual(fn("$awaitModalSubmit").resolved, [])
+    // In ForgeScript's order: $cooldown checks the duration before the ID.
+    assert.match(messages("$cooldown[daily]", "too-few-arguments")[0], /missing argument duration/)
+})
+
+test("values a function's own work fails on: the error ForgeScript then logs", () => {
+    const quote = (code) => /ForgeScript stops the command: "([^"]+)"|with "([^"]+)"/.exec(checkCode(code, table, { values }).find((f) => f.rule === "invalid-argument")?.message ?? "")?.slice(1).find(Boolean)
+    assert.equal(quote("$arrayCreate[a;-1]"), "RangeError: Invalid array length")
+    assert.equal(quote("$base[10;99]"), "RangeError: toString() radix argument must be between 2 and 36")
+    assert.equal(quote("$decodeURIComponent[%]"), "URIError: URI malformed")
+    assert.equal(quote("$repeat[x;-1]"), "RangeError: Invalid count value: -1")
+    assert.equal(quote("$replaceRegex[abc;(;g;x]"), "SyntaxError: Invalid regular expression: /(/g: Unterminated group")
+    assert.equal(quote("$setTimezone[Bad/Zone]"), "RangeError: Invalid time zone specified: Bad/Zone")
+    for (const code of ["$arrayCreate[a;3]", "$base[10;2]", "$decodeURI[%20]", "$repeat[x;2]", "$replaceRegex[abc;a;g;x]", "$setTimezone[Europe/London]", "$repeat[x;$get[n]]"]) {
+        assert.ok(!checkCode(code, table, { values, customFunction: true }).some((f) => f.rule === "invalid-argument"), code)
+    }
+})
+
+test("$callFunction and $callLocalFunction: an unknown name, or too few arguments", () => {
+    const msg = (code, t = table) => checkCode(code, t, { values }).filter((f) => f.rule === "invalid-argument").map((f) => f.message)
+    assert.match(msg("$callLocalFunction[nope]")[0], /ForgeScript stops the command: "Unknown local function with name nope"$/)
+    // Defined after the call: unknown when the call runs.
+    assert.match(msg("$callLocalFunction[add;1;2]$localFunction[add;x;a;b]")[0], /"Unknown local function with name add"/)
+    assert.match(msg("$localFunction[add;x;a;b]$callLocalFunction[add;1]")[0], /"Calling local function add requires 2 arguments, received 1"$/)
+    assert.deepEqual(msg("$localFunction[add;x;a;b]$callLocalFunction[add;1;2]"), [])
+    // A custom function's body may call its caller's local functions.
+    assert.ok(!checkCode("$callLocalFunction[nope]", table, { values, customFunction: true }).some((f) => f.rule === "invalid-argument"))
+    // Custom functions: the bot's own.
+    const custom = new FunctionTable([...table.byKey.values(), { name: "$greet", aliases: null, args: { required: true, fields: [{}] }, params: [{ name: "who", required: true }], unwrap: true, package: "custom" }])
+    assert.match(msg("$callFunction[nope]", custom)[0], /"Unknown function with name nope"$/)
+    assert.match(msg("$callFunction[ping]", custom)[0], /"Unknown function with name ping"$/)
+    assert.match(msg("$callFunction[greet]", custom)[0], /"Calling custom function greet requires 1 argument, received 0"$/)
+    assert.deepEqual(msg("$callFunction[greet;you]", custom), [])
+})
+
+test("misplaced-branch and $ifx without $if: the messages say what ForgeScript does", () => {
+    assert.match(messages("$ifx[$else[b]]", "misplaced-statement")[0], /^\$ifx has no \$if directly in its block\. ForgeScript fails with "TypeError: Cannot read properties of undefined \(reading 'execute'\)", which stops the command$/)
+    assert.match(messages("$else[e]", "misplaced-branch")[0], /^\$else is not directly in an \$ifx, so it runs its code every time$/)
+    assert.match(messages("$ifx[$if[$authorID==1;a]$let[z;1]]", "misplaced-branch")[0], /^\$let never runs: \$ifx runs only its first \$if, its \$elseIf and its first \$else$/)
+    assert.match(messages("$switch[a;$case[a;x]$case[a;y]]", "misplaced-branch")[0], /^This \$case never runs: an earlier \$case has the same value, "a"$/)
 })

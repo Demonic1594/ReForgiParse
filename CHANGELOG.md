@@ -2,6 +2,46 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.9.0 - 2026-11-19
+
+Every ForgeScript function was gone over against its source and ForgeScript's compiler and interpreter. These are now caught.
+
+### Added
+
+- `misplaced-branch` warning:
+  - `$else`, `$elseIf` or `$case` outside `$ifx` or `$switch`, which runs every time;
+  - code in `$ifx` or `$switch` that is no branch of it (text, other functions, a second `$if` or `$else`, a `$case` with the same value as an earlier one), which never runs.
+- `misplaced-statement` also reports `$ifx` with no `$if` directly in its block: ForgeScript fails with a `TypeError`.
+- `invalid-argument` also reports:
+  - the arguments that functions reading their own arguments check (read from each function's source, in its order): `$loop[abc;...]`, `$userCooldown[$authorID;1.5h]`;
+  - `Sticker`, `Emoji`, `ApplicationEmoji`, `GuildEmoji` and `ForumTag` values that are not an ID, a CDN link or (for emojis) `<:name:ID>`: `$emojiName[😀]`;
+  - values a function's own work fails on, with the error it throws: `$repeat[x;-1]`, `$arrayCreate[a;1.5]`, `$base[10;99]`, `$decodeURI`, an invalid `$replaceRegex` pattern or flags, a time zone `$setTimezone` cannot use;
+  - `$callFunction` of a function the bot does not have, `$callLocalFunction` of one no earlier `$localFunction` defines, and either with too few arguments.
+- API: `IRawFunction.resolved`, `IParam.enumObject`, `resolvedArgsOf`, `ExecuteChecks`.
+- `npm run every-function`: every argument ForgeScript checks, in every function, on ForgeScript's interpreter.
+
+### Fixed
+
+- An enum value written as a number was always accepted. ForgeScript looks it up in the enum: `$addButton[id;label;0]` is refused, since button styles start at 1.
+- A BigInt that JavaScript cannot read quoted ForgeScript's usual error. ForgeScript's resolver throws instead, and that error is quoted now ("SyntaxError: Cannot convert 1.5 to a BigInt").
+
+## 0.8.0 - 2026-11-19
+
+### Added
+
+- `incomplete-call` warning: a function that reads its own arguments, missing a required one that ForgeScript does not check for. The function runs anyway, and:
+  - does nothing (`$if[condition]`, `$loop[3]`, `$arrayForEach[a;v]`);
+  - always stops the command (`$onlyForUsers[message]` with no users);
+  - or never ends (`$while[condition]`, with no code to repeat).
+- `misplaced-statement` error: `$break` or `$continue` outside `$loop` and `$while`, or `$return` in a command (it only returns from custom functions, `$loop`, `$try` and array functions' code). ForgeScript stops the command and sends ":x: ... statements are not allowed in outer scopes." to the channel.
+- `condition-operator` reports an empty condition, which ForgeScript reads as false (`$onlyIf[;...]` always stops the command).
+- API: `UncheckedArguments`, the outcome of each missing argument above, with an example run on ForgeScript's interpreter by the tests.
+
+### Changed
+
+- `too-few-arguments` also covers functions that read their own arguments where leaving one out stops the command: `$cooldown` and the other cooldowns, `$wsSend`, and (with ForgeScript's internal error quoted) `$switch`, `$arrayFilter`, `$arrayFind` and the other search functions.
+- The suite is run on every ForgeScript version the peer range allows: 2.5.0, 2.6.0, 2.7.0, 2.7.1 and 2.8.0.
+
 ## 0.7.0 - 2026-11-18
 
 ### Added

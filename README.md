@@ -115,6 +115,16 @@ Each finding states what ForgeScript does with the code. Some consequences:
 - **Only the first rejected argument is reported.** ForgeScript reads a call's arguments in order and stops the command at the first it rejects.
 - **Code that does not compile gets compile errors only.** No argument values, variables or brackets are checked inside a call that does not compile.
 - **Code inside `$escapeCode[...]` is printed, not run.** Only compile errors and bracket problems apply to it.
+- **Some functions read their own arguments**, such as `$if`, `$while` and `$cooldown`, so ForgeScript's usual check for a missing one does not apply. The arguments such a function does check are read from its source, and checked like any other. What leaving out the others does was established for each function on ForgeScript's interpreter: the command stops (`too-few-arguments`), or the function runs without it (`incomplete-call`).
+- **Values a function's own work fails on are checked too**, with the same operation ForgeScript runs: a negative `$repeat` count, an invalid `$replaceRegex` pattern, a time zone `$setTimezone` cannot use, a `$callFunction` of a function the bot does not have.
+
+### Limits
+
+Some things are only known when the bot runs, and are not reported:
+
+- whether an ID, a role or a channel exists, or is the right kind (a thread, a voice channel);
+- values made when the bot runs (`$get[x]`, `$message`);
+- whether a function has the context it reads in the command's event (an interaction in a `messageCreate` command, for example).
 
 ### Errors
 
@@ -123,9 +133,10 @@ Each finding states what ForgeScript does with the code. Some consequences:
 | `missing-brackets` | `$get` | The code does not compile. |
 | `too-many-arguments` | `$get[a;b]` | The code does not compile. |
 | `unclosed-bracket` | `$get[a` | The code does not compile. |
-| `too-few-arguments` | `$addField[Coins]` | The command stops with an error. |
-| `invalid-argument` | `$round[abc]`, `$wait[1.5h]` | The command stops with an error. |
+| `too-few-arguments` | `$addField[Coins]`, `$cooldown[daily]` | The command stops with an error. |
+| `invalid-argument` | `$round[abc]`, `$loop[abc;...]`, `$emojiName[😀]`, `$repeat[x;-1]`, `$callFunction[nope]` | The command stops with an error. |
 | `unknown-event` | `type: "messageCreat"` | The command never runs. |
+| `misplaced-statement` | `$if[...;$break]` outside a loop, `$return` in a command, `$ifx` without an `$if` | The command stops (for the first two, the bot sends an error message). |
 
 ### Warnings
 
@@ -137,7 +148,9 @@ Each finding states what ForgeScript does with the code. Some consequences:
 | `misplaced-operator` | `$#!ping` | The call is printed as text. |
 | `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function. |
 | `stray-bracket` | `$let[a;1]]` | The `]` closes nothing and is printed. |
-| `condition-operator` | `$if[a==1&&b==2;...]` | Only the first operator is evaluated. |
+| `condition-operator` | `$if[a==1&&b==2;...]`, `$onlyIf[;...]` | Only the first operator is evaluated; an empty condition is false. |
+| `incomplete-call` | `$if[condition]`, `$while[condition]` | Runs nothing, always stops, or never ends. |
+| `misplaced-branch` | `$else[...]` outside `$ifx`, a second `$if` in `$ifx` | Runs every time, or never. |
 | `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
 | `http-url` | `http://...` as a URL argument | Converted to an invalid URL. |
 | `unused-variable` | `$let[a;1]` without `$get[a]` | The variable is never read. |
@@ -309,7 +322,7 @@ Positions are UTF-16 offsets, as in JavaScript strings.
 
 ## Testing
 
-Parsing is verified against ForgeScript's compiler on hand-written cases and 20,000 generated inputs. Rule behaviour is verified against ForgeScript's interpreter wherever it can run without Discord. The suite runs on Node.js 22 and 24 with ForgeScript 2.8.0 and 2.5.0, and CI installs the packed package into an empty bot and runs it. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Parsing is verified against ForgeScript's compiler on hand-written cases, 20,000 generated inputs, and every function name and alias with every argument count. Argument checks are verified against ForgeScript's own resolver for every argument type, and on ForgeScript's interpreter for every function wherever it runs without Discord (`npm run every-function`). Rule behaviour is verified against ForgeScript's interpreter wherever it can run without Discord. The suite runs on Node.js 22 and 24 with ForgeScript 2.8.0 and 2.5.0, and CI installs the packed package into an empty bot and runs it. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 npm test
