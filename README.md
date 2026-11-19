@@ -115,6 +115,7 @@ Each finding states what ForgeScript does with the code. Some consequences:
 - **Only the first rejected argument is reported.** ForgeScript reads a call's arguments in order and stops the command at the first it rejects.
 - **Code that does not compile gets compile errors only.** No argument values, variables or brackets are checked inside a call that does not compile.
 - **Code inside `$escapeCode[...]` is printed, not run.** Only compile errors and bracket problems apply to it.
+- **Some functions read their own arguments**, such as `$if`, `$while` and `$cooldown`, so ForgeScript's usual check for a missing one does not apply. What leaving one out does was established for each function on ForgeScript's interpreter: the command stops (`too-few-arguments`), or the function runs without it (`incomplete-call`).
 
 ### Errors
 
@@ -123,9 +124,10 @@ Each finding states what ForgeScript does with the code. Some consequences:
 | `missing-brackets` | `$get` | The code does not compile. |
 | `too-many-arguments` | `$get[a;b]` | The code does not compile. |
 | `unclosed-bracket` | `$get[a` | The code does not compile. |
-| `too-few-arguments` | `$addField[Coins]` | The command stops with an error. |
+| `too-few-arguments` | `$addField[Coins]`, `$cooldown[daily]` | The command stops with an error. |
 | `invalid-argument` | `$round[abc]`, `$wait[1.5h]` | The command stops with an error. |
 | `unknown-event` | `type: "messageCreat"` | The command never runs. |
+| `misplaced-statement` | `$if[...;$break]` outside a loop, `$return` in a command | The command stops, and the bot sends an error message. |
 
 ### Warnings
 
@@ -137,7 +139,8 @@ Each finding states what ForgeScript does with the code. Some consequences:
 | `misplaced-operator` | `$#!ping` | The call is printed as text. |
 | `unescaped-bracket` | `$description[[Docs](url)]` | The first `]` closes the function. |
 | `stray-bracket` | `$let[a;1]]` | The `]` closes nothing and is printed. |
-| `condition-operator` | `$if[a==1&&b==2;...]` | Only the first operator is evaluated. |
+| `condition-operator` | `$if[a==1&&b==2;...]`, `$onlyIf[;...]` | Only the first operator is evaluated; an empty condition is false. |
+| `incomplete-call` | `$if[condition]`, `$while[condition]` | Runs nothing, always stops, or never ends. |
 | `color-value` | `$color[blue]` | Read as hexadecimal: `#00000b`. |
 | `http-url` | `http://...` as a URL argument | Converted to an invalid URL. |
 | `unused-variable` | `$let[a;1]` without `$get[a]` | The variable is never read. |

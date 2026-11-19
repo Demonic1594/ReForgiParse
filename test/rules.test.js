@@ -34,6 +34,11 @@ const CASES = {
     "function-case": { bad: ["$AUTHORID", "$authorid"], good: ["$authorID"] },
     "too-few-arguments": { bad: ["$addField[Coins]"], good: ["$addField[Coins;5]", "$if[1==1]"] },
     "unexpected-brackets": { bad: ["$ping[x]"], good: ["$ping"] },
+    "incomplete-call": { bad: ["$if[$authorID==1]", "$while[1==1]", "$onlyForUsers[Not for you]", "$loop[3]"], good: ["$if[$authorID==1;yes]", "$while[1==2;x]", "$onlyForUsers[Not for you;123456789012345678]", "$loop[3;x]"] },
+    "misplaced-statement": {
+        bad: ["$break", "x$continue", "$if[$authorID==1;$break]", "$scope[$arrayLoad[a;,;1]$arrayForEach[a;v;$break]]", "$return[r]", "$ifx[$if[$authorID==1;$return[r]]]", "$while[$authorID==1;$return[r]]"],
+        good: ["$loop[2;$break]", "$while[$authorID==1;$if[$authorID==1;$break]]", "$loop[2;$scope[$continue]]", "$try[$break]", "$loop[1;$return[r]]", "$arrayLoad[a;,;1]$arrayMap[a;v;$return[v]]", "$async[$break]", "$onlyIf[$authorID==1;$break]", "$escapeCode[$break]"],
+    },
     "stray-bracket": { bad: ["$let[a;1]]", "$if[1==1;yes]]", "done]", "a] [b]"], good: ["Page [1/3]", "$description[x]", "\\]", "$let[a;1]", "$ping[x]", "$get]", "[[a]]"] },
 }
 
@@ -125,4 +130,36 @@ test("code inside $escapeCode is printed as written, never run: only compile and
     assert.deepEqual(rules("$escapeCode[$let[a;1]]$get[a]"), ["unset-variable"])
     // $coroutine runs its code out of sight: the variable rules stand down.
     assert.deepEqual(rules("$let[a;1]$coroutine[$get[a]]"), [])
+})
+
+test("a required argument ForgeScript does not check for: what leaving it out does", () => {
+    // ForgeScript's own check stops the command.
+    assert.deepEqual(rules("$cooldown[daily]"), ["too-few-arguments"])
+    assert.match(messages("$cooldown[daily]", "too-few-arguments")[0], /ForgeScript stops the command: "Function \$cooldown is missing argument duration"/)
+    // An internal error stops it.
+    assert.match(messages("$switch[x]", "too-few-arguments")[0], /^\$switch is missing its argument "cases"\. ForgeScript does not check for it, and fails with "TypeError: Cannot read properties of undefined \(reading 'functions'\)", which stops the command\. Usage: /)
+    // The function runs without it.
+    assert.match(messages("$if[$authorID==1]", "incomplete-call")[0], /^\$if has no "if true", which ForgeScript does not check: it checks the condition, running any function in it, and then runs nothing\. Usage: \$if\[/)
+    assert.match(messages("$while[1==1]", "incomplete-call")[0], /never ends while it is true/)
+    assert.match(messages("$onlyForUsers[Not for you]", "incomplete-call")[0], /always stops the command/)
+    // Only when the argument is absent, not when it is there but written by the bot when it runs.
+    assert.deepEqual(rules("$if[$authorID==1;$get[x]]", { customFunction: true }), [])
+})
+
+test("an empty condition is always false", () => {
+    for (const code of ["$if[;yes;no]", "$if[ ;yes;no]", "$onlyIf[;stopped]", "$and[$authorID==1;]"]) {
+        const m = messages(code, "condition-operator")
+        assert.equal(m.length, 1, code)
+        assert.match(m[0], /is empty, which ForgeScript reads as false/, code)
+    }
+    assert.deepEqual(rules("$if[$get[a];yes;no]", { customFunction: true }), [])
+    // $if[] is one mistake: it has nothing to run, which the incomplete-call finding says.
+    assert.deepEqual(rules("$if[]"), ["incomplete-call"])
+})
+
+test("misplaced-statement: says what ForgeScript sends, and stays quiet in custom functions", () => {
+    assert.match(messages("$if[$authorID==1;$break]", "misplaced-statement")[0], /^\$break is not inside \$loop or \$while: when it runs, ForgeScript stops the command and sends ":x: Break statements are not allowed in outer scopes\."$/)
+    assert.match(messages("$return[r]", "misplaced-statement")[0], /^\$return only returns from a custom function, \$loop, \$try or an array function's code: here, when it runs, ForgeScript stops the command and sends ":x: Return statements are not allowed in outer scopes\."\. To end the command, use \$stop$/)
+    // A custom function's body may $return.
+    assert.ok(!rules("$return[r]", { customFunction: true }).includes("misplaced-statement"))
 })

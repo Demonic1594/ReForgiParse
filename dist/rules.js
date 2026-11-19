@@ -5,7 +5,7 @@
 // ForgeScript does with the code, checked in its source (2.8.0) or by running its own resolvers,
 // so a message is a fact about the bot, not a style opinion.
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Rules = void 0;
+exports.UncheckedArguments = exports.Rules = void 0;
 exports.printedAsWritten = printedAsWritten;
 exports.checkCode = checkCode;
 exports.declaredSpelling = declaredSpelling;
@@ -24,11 +24,13 @@ exports.Rules = {
     "too-few-arguments": { severity: "error", description: "A required argument is missing: the command stops (\"Function $x is missing argument y\")." },
     "invalid-argument": { severity: "error", description: "An argument ForgeScript cannot read as its type: the command stops (\"Given value ... is not of type ...\")." },
     "unexpected-brackets": { severity: "warning", description: "Brackets after a function that takes no arguments: they and their text are printed." },
+    "incomplete-call": { severity: "warning", description: "A function without a required argument that ForgeScript does not check for (`$if[condition]`): it runs, and does nothing, always stops, or never ends." },
     "unknown-function": { severity: "warning", description: "A `$name` that is no function here, so it is printed as text." },
     "glued-name": { severity: "warning", description: "A `$name` whose start is another function: that one runs, and the rest is printed." },
     "misplaced-operator": { severity: "warning", description: "`!`, `#` or `@[...]` in the wrong order, or before another `$`: the call is printed as text." },
     "condition-operator": { severity: "warning", description: "A condition ForgeScript reads differently: a second operator, `&&` or `||`, or no operator at all." },
     "unescaped-bracket": { severity: "warning", description: "A `]` meant for a `[` in the text closes the function instead; the rest is printed." },
+    "misplaced-statement": { severity: "error", description: "`$break` or `$continue` outside `$loop` and `$while`, or `$return` in a command: ForgeScript stops the command and sends an error." },
     "stray-bracket": { severity: "warning", description: "A `]` outside any function that no `[` before it opened: it closes nothing and is printed." },
     "color-value": { severity: "warning", description: "A colour ForgeScript reads differently from what was meant (`blue`, `123456`)." },
     "http-url": { severity: "warning", description: "An `http://` link: ForgeScript only accepts `https://`, and turns it into a broken link." },
@@ -47,6 +49,76 @@ const COMPILE_RULE = {
 };
 /** Code that runs in a copy of the caller's variables, or code nobody can see from here. */
 const OPAQUE = new Set(["$eval", "$djseval", "$callfunction", "$calllocalfunction", "$scope", "$settimeout", "$setinterval", "$awaitcomponent", "$awaitmodalsubmit", "$coroutine"]);
+/**
+ * ForgeScript's functions that read their own arguments (not `unwrap`), so that a required one left
+ * out is not caught by ForgeScript's usual check: what each does without it. Each entry is run on
+ * ForgeScript's interpreter by test/runtime.test.js. Functions whose outcome needs Discord to show
+ * are left out.
+ */
+exports.UncheckedArguments = {
+    $cooldown: { arg: 1, outcome: "stops", example: "$cooldown[daily]" },
+    $usercooldown: { arg: 1, outcome: "stops", example: "$userCooldown[123456789012345678]" },
+    $guildcooldown: { arg: 1, outcome: "stops", example: "$guildCooldown[123456789012345678]" },
+    $channelcooldown: { arg: 1, outcome: "stops", example: "$channelCooldown[123456789012345678]" },
+    $membercooldown: { arg: 2, outcome: "stops", example: "$memberCooldown[123456789012345678;123456789012345678]" },
+    $wssend: { arg: 1, outcome: "stops", example: "$wsSend[123456789012345678]" },
+    $arrayfilter: { arg: 2, outcome: "crashes", reads: "lhs", example: "$arrayLoad[a;,;1,2]$arrayFilter[a;v]" },
+    $arrayfind: { arg: 2, outcome: "crashes", reads: "lhs", example: "$arrayLoad[a;,;1,2]$arrayFind[a;v]" },
+    $arrayfindindex: { arg: 2, outcome: "crashes", reads: "lhs", example: "$arrayLoad[a;,;1,2]$arrayFindIndex[a;v]" },
+    $arrayfindlast: { arg: 2, outcome: "crashes", reads: "lhs", example: "$arrayLoad[a;,;1,2]$arrayFindLast[a;v]" },
+    $arrayfindlastindex: { arg: 2, outcome: "crashes", reads: "lhs", example: "$arrayLoad[a;,;1,2]$arrayFindLastIndex[a;v]" },
+    $arraysome: { arg: 2, outcome: "crashes", reads: "lhs", example: "$arrayLoad[a;,;1,2]$arraySome[a;v]" },
+    $switch: { arg: 1, outcome: "crashes", reads: "functions", example: "$switch[x]" },
+    $if: { arg: 1, outcome: "runs", does: "checks the condition, running any function in it, and then runs nothing", example: "$if[1==1]" },
+    $elseif: { arg: 1, outcome: "runs", does: "checks the condition, running any function in it, and then runs nothing", example: "$elseIf[1==1]" },
+    $loop: { arg: 1, outcome: "runs", does: "repeats nothing", example: "$loop[2]" },
+    $arrayforeach: { arg: 2, outcome: "runs", does: "runs nothing for the elements", example: "$arrayLoad[a;,;1,2]$arrayForEach[a;v]" },
+    $arraymap: { arg: 2, outcome: "runs", does: "runs nothing for the elements, and gives an empty array", example: "$arrayLoad[a;,;1,2]$arrayMap[a;v]" },
+    $arrayevery: { arg: 2, outcome: "runs", does: "runs nothing for the elements, and gives false", example: "$arrayLoad[a;,;1,2]$arrayEvery[a;v]" },
+    $arrayreduce: { arg: 3, outcome: "runs", does: "runs nothing for the elements", example: "$arrayLoad[a;,;1,2]$arrayReduce[a;x;y]" },
+    $arrayadvancedsort: { arg: 3, outcome: "runs", does: "compares nothing, so the order stays as it is", example: "$arrayLoad[a;,;1,2]$arrayAdvancedSort[a;x;y]" },
+    $localfunction: { arg: 1, outcome: "runs", does: "defines a function with no code", example: "$localFunction[f]" },
+    $while: { arg: 1, outcome: "never-ends", does: "checks its condition again and again, and never ends while it is true: the command never finishes", example: "$while[1==1]" },
+    $onlyforusers: { arg: 1, outcome: "always-stops", does: "matches no one, so it always stops the command", example: "$onlyForUsers[Not for you]" },
+    $onlyforroles: { arg: 1, outcome: "always-stops", does: "matches no role, so it always stops the command", example: "$onlyForRoles[Not for you]" },
+    $onlyforchannels: { arg: 1, outcome: "always-stops", does: "matches no channel, so it always stops the command", example: "$onlyForChannels[Not here]" },
+    $onlyforcategories: { arg: 1, outcome: "always-stops", does: "matches no category, so it always stops the command", example: "$onlyForCategories[Not here]" },
+    $onlyforguilds: { arg: 1, outcome: "always-stops", does: "matches no server, so it always stops the command", example: "$onlyForGuilds[Not here]" },
+};
+/**
+ * Functions that pass a `$break`, `$continue` or `$return` in their code on to the function around
+ * them, checked on ForgeScript's interpreter: at the top of a command it is then an error. Any other
+ * function around one (`$loop`, `$try`, an extension's) may handle it, so nothing is reported there.
+ */
+const PASSES_ON = {
+    $break: new Set(["$if", "$elseif", "$else", "$ifx", "$switch", "$case", "$scope", "$arrayforeach"]),
+    $continue: new Set(["$if", "$elseif", "$else", "$ifx", "$switch", "$case", "$scope", "$arrayforeach"]),
+    $return: new Set(["$if", "$elseif", "$else", "$ifx", "$switch", "$case", "$scope", "$arrayforeach", "$while"]),
+};
+/** `$break`, `$continue` and `$return` whose every enclosing function passes them on to the top of a command. */
+function misplacedStatements(result, options, inPrinted, add) {
+    const forgescript = (c) => !c.fn.package || c.fn.package === "@tryforge/forgescript";
+    const visit = (calls, path) => {
+        for (const call of calls) {
+            const name = call.fn.name.toLowerCase();
+            const passes = PASSES_ON[name];
+            // A custom function's body may $return, and runs where its caller is: not judged here.
+            if (passes && forgescript(call) && !options.customFunction && !inPrinted(call.start) && path.every((p) => forgescript(p) && passes.has(p.fn.name.toLowerCase()))) {
+                const kind = name === "$return" ? "Return" : name === "$break" ? "Break" : "Continue";
+                const sent = `":x: ${kind} statements are not allowed in outer scopes."`;
+                if (name === "$return")
+                    add("misplaced-statement", `$return only returns from a custom function, $loop, $try or an array function's code: here, when it runs, ForgeScript stops the command and sends ${sent}. To end the command, use $stop`, call.start, call.end);
+                else
+                    add("misplaced-statement", `${call.name} is not inside $loop or $while: when it runs, ForgeScript stops the command and sends ${sent}`, call.start, call.end);
+            }
+            for (const field of call.fields ?? []) {
+                for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field])
+                    visit(part.functions, [...path, call]);
+            }
+        }
+    };
+    visit(result.functions, []);
+}
 /** Functions that print their argument's code as written instead of running it (`rawValue` in ForgeScript). */
 const AS_WRITTEN = new Set(["$escapecode"]);
 /** What still matters in code that is printed, not run: whether it compiles, and where its brackets close. */
@@ -88,6 +160,7 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
     }
     // Where a misspelt or unknown name sits: the argument it is in is not checked as a value too.
     const misnamed = (field) => issues.some((x) => field.start <= x.start && x.start < field.end);
+    const incomplete = new Set();
     for (const call of calls) {
         const fn = call.fn;
         // A call with a compile error inside never runs, and its arguments are only a guess after the error.
@@ -101,6 +174,20 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         if (declared)
             add("function-case", `Declared as $${declared}; $${call.written.slice(1)} works too, since names ignore case`, call.nameStart, call.nameEnd);
         // Only where ForgeScript resolves the arguments itself: functions like $if read their own fields.
+        const unchecked = !fn.unwrap && (!fn.package || fn.package === "@tryforge/forgescript") ? exports.UncheckedArguments[fn.name.toLowerCase()] : undefined;
+        if (unchecked && call.fields && call.fields.length <= unchecked.arg && compiles) {
+            const arg = fn.params?.[unchecked.arg]?.name ?? `argument ${unchecked.arg + 1}`;
+            const end = call.close !== null ? call.close + 1 : call.end;
+            const help = fn.params ? ` Usage: ${(0, table_1.usage)(fn)}` : "";
+            if (unchecked.outcome === "stops")
+                add("too-few-arguments", `${call.name} is missing its argument "${arg}", so ForgeScript stops the command: "Function ${call.name} is missing argument ${arg}".${help}`, call.start, end);
+            else if (unchecked.outcome === "crashes")
+                add("too-few-arguments", `${call.name} is missing its argument "${arg}". ForgeScript does not check for it, and fails with "TypeError: Cannot read properties of undefined (reading '${unchecked.reads}')", which stops the command.${help}`, call.start, end);
+            else {
+                add("incomplete-call", `${call.name} has no "${arg}", which ForgeScript does not check: it ${unchecked.does}.${help}`, call.start, end);
+                incomplete.add(call);
+            }
+        }
         if (call.fields && fn.params && fn.unwrap && compiles) {
             // In ForgeScript's order (CompiledFunction.resolveArgs): each argument in turn, then the
             // missing ones. The first refusal stops the command, so nothing after it is reported.
@@ -127,7 +214,7 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         }
         for (const field of call.fields ?? []) {
             if (field.kind === "condition")
-                conditionProblems(code, call, field, add);
+                conditionProblems(code, call, field, add, incomplete.has(call));
             for (const part of field.kind === "condition" ? [field.lhs, ...(field.rhs ? [field.rhs] : [])] : [field])
                 textProblems(code, call, part, add);
         }
@@ -149,6 +236,8 @@ function checkCode(code, table, options = {}, result = (0, parser_1.parse)(code,
         }
     }
     misplacedOperators(code, calls, add);
+    if (!result.errors.length)
+        misplacedStatements(result, options, inPrinted, add);
     // Code that does not compile never runs: what its variables would do does not matter.
     if (!result.errors.length)
         variableProblems(calls, options, add);
@@ -280,7 +369,7 @@ function textProblems(code, call, field, add) {
         }
     }
 }
-function conditionProblems(code, call, field, add) {
+function conditionProblems(code, call, field, add, incomplete = false) {
     const plain = (f) => textOf(code, f).filter((c) => !c.escaped).map((c) => c.ch).join("");
     if (field.op !== "unknown" && field.rhs) {
         const rhs = plain(field.rhs);
@@ -290,7 +379,12 @@ function conditionProblems(code, call, field, add) {
         return;
     }
     const text = plain(field.lhs);
-    if (text.includes("&&") || text.includes("||")) {
+    if (!field.lhs.functions.length && text.trim() === "") {
+        // In a call that has nothing to run (incomplete-call), what its condition is changes nothing.
+        if (!incomplete)
+            add("condition-operator", `This condition of ${call.name} is empty, which ForgeScript reads as false`, field.start, Math.max(field.end, field.start + 1));
+    }
+    else if (text.includes("&&") || text.includes("||")) {
         add("condition-operator", `&& and || are not operators in ForgeScript, so ${call.name} compares nothing here. Use $and[...;...] or $or[...;...]`, field.start, field.end);
     }
     else if (!field.lhs.functions.length && !["", "true", "false"].includes(text.trim())) {

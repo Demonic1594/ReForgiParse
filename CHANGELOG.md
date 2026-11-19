@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## 0.8.0 - 2026-11-19
+
+### Added
+
+- `incomplete-call` warning: a function that reads its own arguments, missing a required one that ForgeScript does not check for. The function runs anyway, and:
+  - does nothing (`$if[condition]`, `$loop[3]`, `$arrayForEach[a;v]`);
+  - always stops the command (`$onlyForUsers[message]` with no users);
+  - or never ends (`$while[condition]`, with no code to repeat).
+- `misplaced-statement` error: `$break` or `$continue` outside `$loop` and `$while`, or `$return` in a command (it only returns from custom functions, `$loop`, `$try` and array functions' code). ForgeScript stops the command and sends ":x: ... statements are not allowed in outer scopes." to the channel.
+- `condition-operator` reports an empty condition, which ForgeScript reads as false (`$onlyIf[;...]` always stops the command).
+- API: `UncheckedArguments`, the outcome of each missing argument above, with an example run on ForgeScript's interpreter by the tests.
+
+### Changed
+
+- `too-few-arguments` also covers functions that read their own arguments where leaving one out stops the command: `$cooldown` and the other cooldowns, `$wsSend`, and (with ForgeScript's internal error quoted) `$switch`, `$arrayFilter`, `$arrayFind` and the other search functions.
+- The suite is run on every ForgeScript version the peer range allows: 2.5.0, 2.6.0, 2.7.0, 2.7.1 and 2.8.0.
+
 ## 0.7.0 - 2026-11-18
 
 ### Added
