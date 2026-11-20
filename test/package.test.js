@@ -14,7 +14,10 @@ const MODULES = path.join(ROOT, "node_modules")
 
 test("npm publishes the compiled code, its declarations, the docs and the licences, and nothing else", () => {
     const npm = process.platform === "win32" ? "npm.cmd" : "npm"
-    const [pack] = JSON.parse(execFileSync(npm, ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: ROOT, encoding: "utf8", shell: process.platform === "win32" }))
+    // npm 10 and 11 print a list of packages, npm 12 an object keyed by name.
+    const out = JSON.parse(execFileSync(npm, ["pack", "--dry-run", "--json", "--ignore-scripts"], { cwd: ROOT, encoding: "utf8", shell: process.platform === "win32" }))
+    const pack = Array.isArray(out) ? out[0] : Object.values(out)[0]
+    assert.ok(pack?.files, JSON.stringify(out).slice(0, 500))
     const files = pack.files.map((f) => f.path).sort()
     for (const f of ["README.md", "CHANGELOG.md", "COPYING", "COPYING.LESSER", "package.json", "dist/cli.js", "dist/index.js", "dist/index.d.ts", "dist/core.js", "dist/core.d.ts", "dist/lsp.js"]) assert.ok(files.includes(f), `${f} is published`)
     assert.deepEqual(files.filter((f) => !/^(dist\/[\w.]+\.(js|d\.ts)|README\.md|CHANGELOG\.md|COPYING(\.LESSER)?|package\.json)$/.test(f)), [], "no source maps, sources or tests")

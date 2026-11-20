@@ -61,8 +61,10 @@ test("FunctionTable.fromForgeScript() loads ForgeScript's functions when nothing
     // A fresh process, as a script that never called FunctionManager.loadNative().
     const r = spawnSync(process.execPath, ["-e", 'const { FunctionTable } = require("."); const t = FunctionTable.fromForgeScript(); console.log(t.functions.length, !!t.get("$sendMessage"))'], { cwd: path.join(__dirname, ".."), encoding: "utf8" })
     assert.equal(r.status, 0, r.stderr)
-    const [count, found] = r.stdout.trim().split(" ")
-    assert.ok(Number(count) > 1000, r.stdout)
-    assert.equal(found, "true")
+    // The last line: anything a platform prints first (a warning, colour codes) is not the answer.
+    const m = /(\d+) (true|false)\s*$/.exec(r.stdout)
+    assert.ok(m, JSON.stringify(r.stdout))
+    assert.ok(Number(m[1]) > 1000, JSON.stringify(r.stdout))
+    assert.equal(m[2], "true")
     assert.doesNotMatch(r.stderr, /Attempted to override/)
 })
