@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Fixed
+
+- Tests: the package test reads npm 12's `npm pack --json` output (an object keyed by package name), and the test that loads ForgeScript in a fresh process reads only its last line. Both failed on Termux (Node.js 26, npm 12); ReForgiParse itself was not affected.
+
 ## 0.12.0 - 2026-11-19
 
 ### Added
